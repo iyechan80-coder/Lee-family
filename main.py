@@ -11,7 +11,7 @@ st.markdown("가족들을 위해 제작된 실시간 주식 분석 도구입니�
 # 2. 사이드바 설정 (가족들이 조작할 부분)
 st.sidebar.header("🔍 분석 설정")
 target_ticker = st.sidebar.text_input("종목 코드를 입력하세요 (예: NVDA, 005930.KS)", value="005930.KS")
-period_choice = st.sidebar.selectbox("조회 기간 선택", ["1y", "6mo", "2y", "5y"])
+period_choice = st.sidebar.selectbox("조회 기간 선택", ["1y", "6mo", "2y", "3y"])
 
 def analyze_ultimate_st(ticker):
     try:
