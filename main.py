@@ -37,7 +37,11 @@ with st.sidebar:
     
     st.divider()
     st.header("💾 구글 시트 연동")
-    sheet_url = st.text_input("구글 시트 URL", placeholder="https://docs.google.com/spreadsheets/d/...")
+    
+    # [수정 완료] 제공해주신 구글 시트 URL을 기본값으로 설정했습니다.
+    default_url = "https://docs.google.com/spreadsheets/d/1cDwpOaZfEDJY6v7aZa92A9KgRHFqT8S7jy9jywc5rRY/edit?usp=sharing" 
+    
+    sheet_url = st.text_input("구글 시트 URL", value=default_url, placeholder="https://docs.google.com/spreadsheets/d/...")
     st.caption("※ `secrets.toml`에 키 설정이 선행되어야 합니다.")
 
 # ---------------------------------------------------------
