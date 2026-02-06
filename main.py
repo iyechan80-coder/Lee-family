@@ -10,8 +10,8 @@ import google.generativeai as genai
 import json
 import time
 
-# 1. 초기 설정 (버전 v5.5: 데이터 수신 안정성 강화 Patch)
-st.set_page_config(page_title="Wonju AI Quant Lab v5.5", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v5.6: 재무 정보 수집 안정성 및 에러 방어 강화)
+st.set_page_config(page_title="Wonju AI Quant Lab v5.6", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
@@ -37,17 +37,24 @@ else:
     st.error("⚠️ secrets.toml에 GOOGLE_API_KEY가 없습니다.")
     available_models = []
 
-# 2. 데이터 캐싱 및 초기화
+# 2. 데이터 캐싱 및 초기화 (v5.6: 재무 정보 재시도 로직 추가)
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_stock_info(symbol):
-    try:
-        tick = yf.Ticker(symbol)
-        info = tick.info
-        # 필수 데이터 확인
-        if 'symbol' not in info: return None
-        return info
-    except Exception:
-        return None
+    # 일시적 오류 극복을 위해 최대 3회 재시도
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            tick = yf.Ticker(symbol)
+            info = tick.info
+            # 필수 데이터('symbol' 키)가 있는지 확인하여 유효성 검증
+            if info and 'symbol' in info:
+                return info
+        except Exception:
+            # 실패 시 잠시 대기 후 재시도
+            time.sleep(1)
+            continue
+    # 모든 시도 실패 시 None 반환 (이후 로직에서 {}로 처리됨)
+    return None
 
 # 3. 펀더멘털 지표 시각화 (예외 처리 강화)
 def display_fundamental_metrics(info):
@@ -191,7 +198,9 @@ df = get_advanced_data(target_ticker, period_choice)
 
 if df is not None:
     last = df.iloc[-1]
-    # [Fix] info_data가 None일 경우 빈 딕셔너리로 대체하여 .get 에러 방지
+    
+    # [Fix v5.6] info_data가 None일 경우 빈 딕셔너리로 대체하여 .get 에러 방지
+    # 이 부분이 핵심 패치입니다.
     info_data = get_stock_info(target_ticker) or {}
     
     current_price = last['Close']
@@ -203,7 +212,7 @@ if df is not None:
         price_change = 0
         pct_change = 0
 
-    st.title(f"📈 {target_ticker} Pro Dashboard v5.5")
+    st.title(f"📈 {target_ticker} Pro Dashboard v5.6")
     
     st.markdown("### 💰 현재 주가")
     st.metric(
@@ -213,6 +222,7 @@ if df is not None:
     )
     st.divider()
     
+    # 수정된 함수에 info_data 전달
     display_fundamental_metrics(info_data)
 
     st.subheader("📊 기술적 분석 차트")
@@ -239,7 +249,7 @@ if df is not None:
     fig.update_layout(height=800, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
-    # [v5.5] 지인 공유용 가이드 및 원클릭 복사 최적화
+    # [v5.6] 지인 공유용 가이드 및 원클릭 복사 최적화
     st.divider()
     st.subheader("💎 원주 퀀트 연구소 이용 가이드")
     
@@ -293,7 +303,7 @@ if df is not None:
     with st.expander("✅ Gems 심층 분석용 데이터 팩 추출", expanded=True):
         news_headlines = get_robust_news(target_ticker)
         
-        # [Fix] info_data가 빈 딕셔너리일 경우 .get() 사용으로 에러 방지
+        # [Fix v5.6] info_data가 빈 딕셔너리일 경우 .get() 사용으로 에러 방지
         sector = info_data.get('sector', 'Unknown')
         
         sector_guidance = {
@@ -302,7 +312,7 @@ if df is not None:
             "Consumer Defensive": "원자재 가격 변동성 및 내수 소비 트렌드 점검."
         }.get(sector, "업계 경쟁력 및 시장 점유율 점검.")
 
-        # [v5.5 개선] 뉴스 오류 가이드 자동 강화
+        # [v5.6 유지] 뉴스 오류 시 자동 가이드 삽입 로직
         news_instruction = ""
         if "데이터 없음" in news_headlines or "시스템 오류" in news_headlines:
             news_instruction = f"⚠️ [주의] 뉴스 수집 장애가 감지되었습니다. 분석 전 구글 검색으로 '{target_ticker} 최신 리스크'와 '섹터 현황'을 직접 검색하여 보완하세요.\n"
