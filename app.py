@@ -10,7 +10,7 @@ import google.generativeai as genai
 import json
 import time
 
-# 1. 초기 설정 (버전 v5.5: 뉴스 파싱 안정성 강화 및 데이터팩 레이아웃 최적화)
+# 1. 초기 설정 (버전 v5.5: 데이터 수신 안정성 강화 Patch)
 st.set_page_config(page_title="Wonju AI Quant Lab v5.5", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
@@ -43,20 +43,23 @@ def get_stock_info(symbol):
     try:
         tick = yf.Ticker(symbol)
         info = tick.info
+        # 필수 데이터 확인
         if 'symbol' not in info: return None
         return info
     except Exception:
         return None
 
-# 3. 펀더멘털 지표 시각화
-def display_fundamental_metrics(ticker_symbol):
-    info = get_stock_info(ticker_symbol)
-    if info is None:
-        st.warning(f"⚠️ '{ticker_symbol}' 정보를 불러올 수 없습니다.")
+# 3. 펀더멘털 지표 시각화 (예외 처리 강화)
+def display_fundamental_metrics(info):
+    # [Fix] info가 None이거나 빈 딕셔너리일 경우 방어 로직
+    if not info:
+        st.warning("⚠️ 기업 재무 정보를 불러올 수 없습니다. (차트 및 기술적 분석은 가능)")
         return
 
     currency = info.get('currency', 'KRW')
     market_cap = info.get('marketCap', 0)
+    
+    # 화폐 단위 처리
     if currency == 'KRW':
         cap_display = f"{market_cap / 1_000_000_000_000:.2f}조 원"
     elif currency == 'USD':
@@ -64,8 +67,10 @@ def display_fundamental_metrics(ticker_symbol):
     else:
         cap_display = f"{market_cap:,.0f} {currency}"
 
-    st.markdown(f"### 🏢 {info.get('shortName', ticker_symbol)} 펀더멘털(기초체력) 분석")
+    st.markdown(f"### 🏢 {info.get('shortName', 'Unknown')} 펀더멘털(기초체력) 분석")
     col1, col2, col3, col4 = st.columns(4)
+    
+    # 데이터가 없을 경우 'N/A' 처리
     with col1: st.metric("시가총액", cap_display)
     with col2: st.metric("PER (주가수익비율)", f"{info.get('trailingPE', 0):.2f}배" if info.get('trailingPE') else "N/A")
     with col3: st.metric("PBR (주가순자산비율)", f"{info.get('priceToBook', 0):.2f}배" if info.get('priceToBook') else "N/A")
@@ -84,7 +89,7 @@ def save_to_google_sheet(url, data):
     except Exception:
         return False
 
-# 5. 뉴스 가져오기 (v5.5: 데이터 구조 결함 방어 로직 강화)
+# 5. 뉴스 가져오기 (v5.5: 구조적 데이터 결함 방어 로직)
 def get_robust_news(ticker):
     max_retries = 2
     for attempt in range(max_retries):
@@ -93,12 +98,12 @@ def get_robust_news(ticker):
             if attempt > 0: time.sleep(1)
             news_data = stock.news
             
-            # 뉴스 데이터가 리스트인지 확인
+            # [Fix] 리스트 여부 및 내부 키 존재 여부 확인 (KeyError 방지)
             if isinstance(news_data, list) and len(news_data) > 0:
                 news_list = []
                 for n in news_data[:5]:
                     if isinstance(n, dict):
-                        # .get()을 사용하여 키 부재 에러 방지 (핵심 보완)
+                        # .get()을 사용하여 'title' 키가 없어도 에러나지 않게 처리
                         title = n.get('title', '제목 정보 없음')
                         publisher = n.get('publisher', '출처 미상')
                         news_list.append(f"- {title} ({publisher})")
@@ -186,7 +191,8 @@ df = get_advanced_data(target_ticker, period_choice)
 
 if df is not None:
     last = df.iloc[-1]
-    info_data = get_stock_info(target_ticker)
+    # [Fix] info_data가 None일 경우 빈 딕셔너리로 대체하여 .get 에러 방지
+    info_data = get_stock_info(target_ticker) or {}
     
     current_price = last['Close']
     if len(df) >= 2:
@@ -207,7 +213,7 @@ if df is not None:
     )
     st.divider()
     
-    display_fundamental_metrics(target_ticker)
+    display_fundamental_metrics(info_data)
 
     st.subheader("📊 기술적 분석 차트")
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.2, 0.3], vertical_spacing=0.03)
@@ -217,8 +223,6 @@ if df is not None:
     fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], name="하단", line=dict(dash='dot', color='white')), row=1, col=1)
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="거래량"), row=2, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI"), row=3, col=1)
-    fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=70, y1=70, line=dict(color="red", dash="dot"), row=3, col=1)
-    fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=30, y1=30, line=dict(color="green", dash="dot"), row=3, col=1)
     
     fig.update_xaxes(
         rangeselector=dict(
@@ -288,6 +292,8 @@ if df is not None:
     st.subheader("🚀 Deep Research 데이터 팩")
     with st.expander("✅ Gems 심층 분석용 데이터 팩 추출", expanded=True):
         news_headlines = get_robust_news(target_ticker)
+        
+        # [Fix] info_data가 빈 딕셔너리일 경우 .get() 사용으로 에러 방지
         sector = info_data.get('sector', 'Unknown')
         
         sector_guidance = {
