@@ -7,11 +7,12 @@ import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
+import json
 
 # 1. 초기 설정 및 보안 연결
-st.set_page_config(page_title="Wonju AI Quant Lab Pro v4.0", layout="wide", page_icon="🔥")
+st.set_page_config(page_title="Wonju AI Quant Lab Pro v4.2", layout="wide", page_icon="🔥")
 
-# [보완] 모델을 안전하게 불러오는 함수 (404 에러 방지)
+# 모델 로드 (안전 장치 포함)
 def get_stable_model():
     try:
         # 사용 가능한 모델 리스트 확인
@@ -29,8 +30,7 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("⚠️ secrets.toml에 GOOGLE_API_KEY가 없습니다.")
 
-# 2. [NEW] 펀더멘털 데이터 수집 및 캐싱 (Engineering Standard)
-# 재무 정보는 장중 변동이 적으므로 1시간(3600초) 캐싱하여 속도 최적화
+# 2. 펀더멘털 데이터 수집 및 캐싱
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_stock_info(symbol):
     try:
@@ -41,7 +41,7 @@ def get_stock_info(symbol):
     except Exception:
         return None
 
-# 3. [NEW] 펀더멘털 지표 시각화 함수
+# 3. 펀더멘털 지표 시각화 함수
 def display_fundamental_metrics(ticker_symbol):
     info = get_stock_info(ticker_symbol)
     
@@ -63,7 +63,6 @@ def display_fundamental_metrics(ticker_symbol):
     # UI 레이아웃
     st.markdown(f"### 🏢 {info.get('shortName', ticker_symbol)} 펀더멘털 개요")
     
-    # 모바일 가독성을 위해 CSS 스타일 조정 없이 st.columns 활용
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -109,7 +108,35 @@ def get_robust_news(ticker):
     except Exception:
         return "뉴스를 불러오는 중 오류가 발생했습니다."
 
-# 6. 테크니컬 데이터 계산
+# [NEW] 6. 감성 분석 게이지 차트 생성 함수
+def create_sentiment_gauge(score):
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = score,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "AI 뉴스 감성 점수"},
+        gauge = {
+            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"},
+            'bar': {'color': "rgba(0,0,0,0)"}, # 투명 바 (화살표 대신 색상 구간으로 표시)
+            'bgcolor': "white",
+            'borderwidth': 2,
+            'bordercolor': "gray",
+            'steps': [
+                {'range': [0, 40], 'color': '#ff4b4b'},  # 부정 (Red)
+                {'range': [40, 60], 'color': '#faca2b'}, # 중립 (Yellow)
+                {'range': [60, 100], 'color': '#09ab3b'} # 긍정 (Green)
+            ],
+            'threshold': {
+                'line': {'color': "white", 'width': 4},
+                'thickness': 0.75,
+                'value': score
+            }
+        }
+    ))
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+    return fig
+
+# 7. 테크니컬 데이터 계산
 @st.cache_data(ttl=3600)
 def get_advanced_data(ticker, period):
     try:
@@ -137,8 +164,6 @@ with st.sidebar:
     target_ticker = st.text_input("종목 코드", value="005930.KS").upper()
     period_choice = st.selectbox("분석 기간", ["6mo", "1y", "3y"], index=0)
     
-    # [사용자 설정] 공유해주신 구글 시트 링크를 기본값으로 고정했습니다.
-    # main.py가 아닌 이 파일(app.py)에 설정하는 것이 맞습니다.
     sheet_url = st.text_input(
         "구글 시트 URL", 
         value="https://docs.google.com/spreadsheets/d/1cDwpOaZfEDJY6v7aZa92A9KgRHFqT8S7jy9jywc5rRY/edit?usp=sharing"
@@ -154,10 +179,10 @@ if df is not None:
     last = df.iloc[-1]
     st.title(f"🔥 {target_ticker} 딥 다이브 대시보드")
     
-    # [통합] 1. 펀더멘털 분석 (상단 배치)
+    # [통합] 1. 펀더멘털 분석
     display_fundamental_metrics(target_ticker)
 
-    # [통합] 2. 테크니컬 차트 (중단 배치)
+    # [통합] 2. 테크니컬 차트
     st.subheader("📈 기술적 차트 분석")
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.2, 0.3], vertical_spacing=0.03)
     
@@ -179,43 +204,59 @@ if df is not None:
     fig.update_layout(height=800, template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
-    # [통합] 3. AI 리포트 및 저장 (하단 배치)
+    # [통합] 3. AI 감성 분석 & 전략 리포트 (Phase 2 업그레이드)
     st.divider()
-    col_ai, col_save = st.columns([2, 1])
+    st.subheader("📢 AI 감성 & 전략 리포트")
     
-    with col_ai:
-        st.subheader("📢 AI 전략 리포트")
-        news_headlines = get_robust_news(target_ticker)
-        
-        # [프롬프트 고도화] 매수/매도 의견을 더 명확하게 요청
-        ai_prompt = f"""
-        당신은 원주 퀀트 연구소의 수석 트레이더입니다. {target_ticker}에 대한 명확한 행동 지침을 제공하세요.
-        
-        [현재 데이터]
-        - 현재가: {last['Close']:,.0f}
-        - RSI(14): {last['RSI']:.1f} (30이하 과매도, 70이상 과매수)
-        - 볼린저밴드 위치: 상단({last['Upper']:,.0f}) / 하단({last['Lower']:,.0f})
-        
-        [최신 뉴스 요약]
-        {news_headlines}
-        
-        [요청사항]
-        1. 펀더멘털과 기술적 지표를 종합하여 [적극 매수 / 관망 / 매도] 중 하나의 의견을 첫 줄에 두괄식으로 제시하세요.
-        2. 뉴스의 호재/악재가 현재 주가에 반영되었는지 분석하세요.
-        3. 초보 투자자인 가족들을 위해 전문 용어 없이 쉽게 설명하세요.
-        """
-        
-        if st.button("🤖 뉴스 + 차트 + 펀더멘털 통합 분석", type="primary"):
-            with st.spinner("퀀트 엔진이 데이터를 분석 중입니다..."):
-                try:
-                    response = model.generate_content(ai_prompt)
-                    st.success("분석 완료!")
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"AI 분석 오류: {e}")
+    # 버튼을 누르면 AI 분석 시작
+    if st.button("🤖 뉴스 감성 + 퀀트 전략 분석 실행", type="primary"):
+        with st.spinner("AI가 뉴스 감성을 채점하고 차트를 분석 중입니다..."):
+            news_headlines = get_robust_news(target_ticker)
+            
+            # [Step 1] 뉴스 감성 점수 산출 (JSON 포맷 요청)
+            sentiment_prompt = f"""
+            Analyze the sentiment of the following news headlines for {target_ticker}.
+            Return ONLY a JSON object with a 'score' (0-100, where 0 is very negative, 100 is very positive) and a short 'reason'.
+            Headlines: {news_headlines}
+            Format: {{"score": 50, "reason": "summary..."}}
+            """
+            
+            try:
+                # 감성 점수 추출
+                sentiment_res = model.generate_content(sentiment_prompt)
+                # JSON 파싱 (혹시 모를 마크다운 태그 제거)
+                sentiment_text = sentiment_res.text.replace('```json', '').replace('```', '')
+                sentiment_data = json.loads(sentiment_text)
+                score = sentiment_data.get('score', 50)
+                reason = sentiment_data.get('reason', '뉴스 분석 불가')
+                
+                # [Step 2] 결과 시각화 (좌: 게이지 차트 / 우: 텍스트 요약)
+                col_gauge, col_text = st.columns([1, 2])
+                with col_gauge:
+                    st.plotly_chart(create_sentiment_gauge(score), use_container_width=True)
+                
+                with col_text:
+                    st.markdown(f"**📰 뉴스 요약 및 감성 분석**")
+                    st.info(f"{reason} (점수: {score}/100)")
+                    
+                # [Step 3] 최종 매매 전략 수립 (점수 + 차트 데이터 결합)
+                final_prompt = f"""
+                당신은 원주 퀀트 연구소 수석 트레이더입니다.
+                [데이터] 현재가: {last['Close']:,.0f}, RSI: {last['RSI']:.1f}, 뉴스 감성점수: {score}/100
+                [뉴스 요약] {reason}
+                위 데이터를 종합하여 [적극 매수/분할 매수/관망/매도] 중 하나의 결론을 내리고, 가족들이 이해하기 쉽게 3줄로 요약해 주세요.
+                """
+                final_res = model.generate_content(final_prompt)
+                st.markdown("### 🗣️ 수석 트레이더의 조언")
+                st.write(final_res.text)
 
-    with col_save:
-        st.subheader("💾 데이터 기록")
+            except Exception as e:
+                st.error(f"분석 중 오류 발생: {e}")
+                st.write("상세 에러:", e)
+
+    st.divider()
+    # 저장 기능 하단 배치 (UI 정리)
+    with st.expander("💾 데이터 기록 열기"):
         st.caption("현재 주가와 RSI 상태를 구글 시트에 저장합니다.")
         if st.button("🚀 투자 기록 저장"):
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
