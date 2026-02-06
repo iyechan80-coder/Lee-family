@@ -1,4 +1,4 @@
-iimport streamlit as st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -219,4 +219,3 @@ if df is not None:
                         st.error(msg)
 else:
     st.error(f"❌ '{target_ticker}' 데이터를 불러올 수 없습니다. 종목 코드가 올바른지(예: 005930.KS) 확인해주세요.")
-
