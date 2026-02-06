@@ -9,16 +9,26 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import json
 
-# 1. 초기 설정 (버전 v4.7: UX 개선 및 주가 표시)
-st.set_page_config(page_title="Wonju AI Quant Lab v4.7", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v4.9: 모델명 매칭 로직 유연화)
+st.set_page_config(page_title="Wonju AI Quant Lab v4.9", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
     try:
         # generateContent를 지원하는 모델 리스트 확보
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # 선호도 순서대로 정렬 (Pro > Flash > Legacy Pro)
-        priority = ['models/gemini-1.5-pro', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        
+        # [수정] 최신 모델(2.5, 2.0)을 포함하여 우선순위 재정의
+        priority = [
+            'models/gemini-2.5-pro', 
+            'models/gemini-2.5-flash',
+            'models/gemini-2.0-pro-exp', 
+            'models/gemini-2.0-flash-exp',
+            'models/gemini-1.5-pro', 
+            'models/gemini-1.5-flash',
+            'models/gemini-pro'
+        ]
+        
         sorted_models = [p for p in priority if p in models]
         # 리스트에 없는 기타 모델들 추가
         remaining = [m for m in models if m not in priority]
@@ -133,19 +143,22 @@ def get_advanced_data(ticker, period):
 with st.sidebar:
     st.header("🔍 원주 퀀트 연구소")
     
-    # [UX 개선] AI 모델 선택기 (친절한 이름 적용)
+    # [UX 개선] AI 모델 선택기 (버전 무관 범용 매칭 적용)
     st.subheader("🤖 AI 모델 설정")
     
-    # 모델명 매핑 딕셔너리
-    model_aliases = {
-        'models/gemini-1.5-pro': '🧠 Premium (심층 추론 - 가장 똑똑함)',
-        'models/gemini-1.5-flash': '⚡ Flash (빠른 속도 - 가성비)',
-        'models/gemini-pro': '🤖 Legacy (구형 모델)'
-    }
-    
-    # 선택 상자에 표시될 이름을 변환하는 함수
+    # [수정] 버전 번호가 바뀌어도 알아서 분류하는 로직
     def format_model_name(option):
-        return model_aliases.get(option, option) # 매핑에 없으면 원래 이름 사용
+        name = option.lower()
+        clean_name = option.replace('models/', '')
+        
+        if 'pro' in name: 
+            return f'🧠 Premium ({clean_name})'
+        if 'flash' in name: 
+            return f'⚡ Flash ({clean_name})'
+        if 'lite' in name:
+            return f'🍃 Lite ({clean_name})'
+            
+        return clean_name
 
     selected_model_name = st.selectbox(
         "사용할 분석 엔진 (Brain)",
@@ -179,7 +192,7 @@ if df is not None:
         price_change = 0
         pct_change = 0
 
-    st.title(f"📈 {target_ticker} Pro Dashboard v4.7")
+    st.title(f"📈 {target_ticker} Pro Dashboard v4.9")
     
     # [NEW] 메인 가격 표시 (가장 눈에 띄게)
     st.markdown("### 💰 현재 주가")
@@ -196,6 +209,8 @@ if df is not None:
     # 2. 차트 분석
     st.subheader("📊 기술적 분석 차트")
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.2, 0.3], vertical_spacing=0.03)
+    
+    # 캔들차트 & 지표 추가
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="주가"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], name="상단", line=dict(dash='dot', color='white')), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20일선", line=dict(color='yellow')), row=1, col=1)
@@ -204,13 +219,29 @@ if df is not None:
     fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI"), row=3, col=1)
     fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=70, y1=70, line=dict(color="red", dash="dot"), row=3, col=1)
     fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=30, y1=30, line=dict(color="green", dash="dot"), row=3, col=1)
-    fig.update_layout(height=800, template="plotly_dark", xaxis_rangeslider_visible=False)
+    
+    # [NEW] 차트 인터랙션 강화: 기간 선택 버튼 추가
+    fig.update_xaxes(
+        rangeselector=dict(
+            buttons=list([
+                dict(count=1, label="1m", step="month", stepmode="backward"),
+                dict(count=3, label="3m", step="month", stepmode="backward"),
+                dict(count=6, label="6m", step="month", stepmode="backward"),
+                dict(step="all", label="All")
+            ]),
+            bgcolor="#333", # 버튼 배경색 (다크모드 대응)
+            font=dict(color="white") # 버튼 글자색
+        ),
+        rangeslider_visible=False
+    )
+    
+    fig.update_layout(height=800, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
     # 3. AI 분석
     st.divider()
-    # 표시용 이름을 가져와서 타이틀에 보여줌
-    display_name = model_aliases.get(selected_model_name, selected_model_name)
+    # 표시용 이름을 가져와서 타이틀에 보여줌 (재사용)
+    display_name = format_model_name(selected_model_name)
     st.subheader(f"📢 AI 정밀 분석 (Engine: {display_name})")
     
     if st.button("🤖 뉴스 감성 + 전략 분석 실행", type="primary", use_container_width=True):
@@ -247,6 +278,9 @@ if df is not None:
                 final_res = active_model.generate_content(final_prompt, generation_config=gen_config)
                 st.write("### 🗣️ 트레이더 의견")
                 st.success(final_res.text)
+                
+                # [NEW] 분석 완료 알림
+                st.toast(f"✅ {target_ticker} 분석이 완료되었습니다!", icon="🎉")
 
             except Exception as e:
                 st.error(f"분석 오류 ({selected_model_name}): {e}")
