@@ -136,7 +136,14 @@ with st.sidebar:
     st.header("🔍 원주 퀀트 연구소")
     target_ticker = st.text_input("종목 코드", value="005930.KS").upper()
     period_choice = st.selectbox("분석 기간", ["6mo", "1y", "3y"], index=0)
-    sheet_url = st.text_input("구글 시트 URL", value="https://docs.google.com/spreadsheets/d/1cDwpOaZfEDJY6v7aZa92A9KgRHFqT8S7jy9jywc5rRY/edit?usp=sharing")
+    
+    # [사용자 설정] 공유해주신 구글 시트 링크를 기본값으로 고정했습니다.
+    # main.py가 아닌 이 파일(app.py)에 설정하는 것이 맞습니다.
+    sheet_url = st.text_input(
+        "구글 시트 URL", 
+        value="https://docs.google.com/spreadsheets/d/1cDwpOaZfEDJY6v7aZa92A9KgRHFqT8S7jy9jywc5rRY/edit?usp=sharing"
+    )
+    
     st.markdown("---")
     st.info("💡 **Tip**: 한국 주식은 '.KS', 미국 주식은 티커만 입력하세요.")
 
