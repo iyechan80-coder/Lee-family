@@ -10,7 +10,8 @@ import google.generativeai as genai
 import json
 
 # 1. 초기 설정 및 보안 연결
-st.set_page_config(page_title="Wonju AI Quant Lab Pro v4.2", layout="wide", page_icon="🔥")
+# [수정] 버전 정보 v4.3 (Stable)로 업데이트: 업데이트 여부를 시각적으로 확인하기 위함
+st.set_page_config(page_title="Wonju AI Quant Lab Pro v4.3", layout="wide", page_icon="🔥")
 
 # 모델 로드 (안전 장치 포함)
 def get_stable_model():
@@ -108,7 +109,7 @@ def get_robust_news(ticker):
     except Exception:
         return "뉴스를 불러오는 중 오류가 발생했습니다."
 
-# [NEW] 6. 감성 분석 게이지 차트 생성 함수
+# 6. 감성 분석 게이지 차트 생성 함수
 def create_sentiment_gauge(score):
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
@@ -117,7 +118,7 @@ def create_sentiment_gauge(score):
         title = {'text': "AI 뉴스 감성 점수"},
         gauge = {
             'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"},
-            'bar': {'color': "rgba(0,0,0,0)"}, # 투명 바 (화살표 대신 색상 구간으로 표시)
+            'bar': {'color': "rgba(0,0,0,0)"}, # 투명 바
             'bgcolor': "white",
             'borderwidth': 2,
             'bordercolor': "gray",
@@ -177,7 +178,8 @@ df = get_advanced_data(target_ticker, period_choice)
 
 if df is not None:
     last = df.iloc[-1]
-    st.title(f"🔥 {target_ticker} 딥 다이브 대시보드")
+    # [확인] 버전 정보가 v4.3 (Stable)로 표시되는지 확인하세요.
+    st.title(f"🔥 {target_ticker} Pro Dashboard v4.3 (Stable)")
     
     # [통합] 1. 펀더멘털 분석
     display_fundamental_metrics(target_ticker)
@@ -204,7 +206,7 @@ if df is not None:
     fig.update_layout(height=800, template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
-    # [통합] 3. AI 감성 분석 & 전략 리포트 (Phase 2 업그레이드)
+    # [통합] 3. AI 감성 분석 & 전략 리포트
     st.divider()
     st.subheader("📢 AI 감성 & 전략 리포트")
     st.caption("👇 아래 버튼을 누르면 최신 뉴스를 분석하여 호재/악재 점수와 투자 전략을 보여줍니다.")
@@ -214,7 +216,10 @@ if df is not None:
         with st.spinner("AI가 뉴스 감성을 채점하고 차트를 분석 중입니다..."):
             news_headlines = get_robust_news(target_ticker)
             
-            # [Step 1] 뉴스 감성 점수 산출 (JSON 포맷 요청)
+            # [핵심] 일관된 결과를 위해 temperature=0.0 설정 (결정론적 출력)
+            generation_config = genai.types.GenerationConfig(temperature=0.0)
+            
+            # [Step 1] 뉴스 감성 점수 산출
             sentiment_prompt = f"""
             Analyze the sentiment of the following news headlines for {target_ticker}.
             Return ONLY a JSON object with a 'score' (0-100, where 0 is very negative, 100 is very positive) and a short 'reason'.
@@ -224,14 +229,15 @@ if df is not None:
             
             try:
                 # 감성 점수 추출
-                sentiment_res = model.generate_content(sentiment_prompt)
-                # JSON 파싱 (혹시 모를 마크다운 태그 제거)
+                sentiment_res = model.generate_content(sentiment_prompt, generation_config=generation_config)
+                
+                # JSON 파싱
                 sentiment_text = sentiment_res.text.replace('```json', '').replace('```', '')
                 sentiment_data = json.loads(sentiment_text)
                 score = sentiment_data.get('score', 50)
                 reason = sentiment_data.get('reason', '뉴스 분석 불가')
                 
-                # [Step 2] 결과 시각화 (좌: 게이지 차트 / 우: 텍스트 요약)
+                # [Step 2] 결과 시각화
                 col_gauge, col_text = st.columns([1, 2])
                 with col_gauge:
                     st.plotly_chart(create_sentiment_gauge(score), use_container_width=True)
@@ -240,14 +246,15 @@ if df is not None:
                     st.markdown(f"**📰 뉴스 요약 및 감성 분석**")
                     st.info(f"{reason} (점수: {score}/100)")
                     
-                # [Step 3] 최종 매매 전략 수립 (점수 + 차트 데이터 결합)
+                # [Step 3] 최종 매매 전략 수립
                 final_prompt = f"""
                 당신은 원주 퀀트 연구소 수석 트레이더입니다.
                 [데이터] 현재가: {last['Close']:,.0f}, RSI: {last['RSI']:.1f}, 뉴스 감성점수: {score}/100
                 [뉴스 요약] {reason}
                 위 데이터를 종합하여 [적극 매수/분할 매수/관망/매도] 중 하나의 결론을 내리고, 가족들이 이해하기 쉽게 3줄로 요약해 주세요.
                 """
-                final_res = model.generate_content(final_prompt)
+                
+                final_res = model.generate_content(final_prompt, generation_config=generation_config)
                 st.markdown("### 🗣️ 수석 트레이더의 조언")
                 st.write(final_res.text)
 
@@ -256,7 +263,7 @@ if df is not None:
                 st.write("상세 에러:", e)
 
     st.divider()
-    # 저장 기능 하단 배치 (UI 정리)
+    # 저장 기능
     with st.expander("💾 데이터 기록 열기"):
         st.caption("현재 주가와 RSI 상태를 구글 시트에 저장합니다.")
         if st.button("🚀 투자 기록 저장"):
