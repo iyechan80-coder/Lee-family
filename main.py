@@ -9,16 +9,26 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import json
 
-# 1. 초기 설정 (버전 v4.8: 차트 인터랙션 강화 및 UI 폴리싱)
-st.set_page_config(page_title="Wonju AI Quant Lab v4.8", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v4.9: 모델명 매칭 로직 유연화)
+st.set_page_config(page_title="Wonju AI Quant Lab v4.9", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
     try:
         # generateContent를 지원하는 모델 리스트 확보
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # 선호도 순서대로 정렬 (Pro > Flash > Legacy Pro)
-        priority = ['models/gemini-1.5-pro', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        
+        # [수정] 최신 모델(2.5, 2.0)을 포함하여 우선순위 재정의
+        priority = [
+            'models/gemini-2.5-pro', 
+            'models/gemini-2.5-flash',
+            'models/gemini-2.0-pro-exp', 
+            'models/gemini-2.0-flash-exp',
+            'models/gemini-1.5-pro', 
+            'models/gemini-1.5-flash',
+            'models/gemini-pro'
+        ]
+        
         sorted_models = [p for p in priority if p in models]
         # 리스트에 없는 기타 모델들 추가
         remaining = [m for m in models if m not in priority]
@@ -133,18 +143,22 @@ def get_advanced_data(ticker, period):
 with st.sidebar:
     st.header("🔍 원주 퀀트 연구소")
     
-    # [UX 개선] AI 모델 선택기 (친절한 이름 적용 - 유연한 매칭)
+    # [UX 개선] AI 모델 선택기 (버전 무관 범용 매칭 적용)
     st.subheader("🤖 AI 모델 설정")
     
-    # 선택 상자에 표시될 이름을 변환하는 함수 (부분 일치 로직 적용)
+    # [수정] 버전 번호가 바뀌어도 알아서 분류하는 로직
     def format_model_name(option):
-        if 'gemini-1.5-pro' in option: 
-            return '🧠 Premium (심층 추론 - 가장 똑똑함)'
-        if 'gemini-1.5-flash' in option: 
-            return '⚡ Flash (빠른 속도 - 가성비)'
-        if 'gemini-pro' in option: 
-            return '🤖 Legacy (구형 모델)'
-        return option.replace('models/', '')
+        name = option.lower()
+        clean_name = option.replace('models/', '')
+        
+        if 'pro' in name: 
+            return f'🧠 Premium ({clean_name})'
+        if 'flash' in name: 
+            return f'⚡ Flash ({clean_name})'
+        if 'lite' in name:
+            return f'🍃 Lite ({clean_name})'
+            
+        return clean_name
 
     selected_model_name = st.selectbox(
         "사용할 분석 엔진 (Brain)",
@@ -178,7 +192,7 @@ if df is not None:
         price_change = 0
         pct_change = 0
 
-    st.title(f"📈 {target_ticker} Pro Dashboard v4.8")
+    st.title(f"📈 {target_ticker} Pro Dashboard v4.9")
     
     # [NEW] 메인 가격 표시 (가장 눈에 띄게)
     st.markdown("### 💰 현재 주가")
