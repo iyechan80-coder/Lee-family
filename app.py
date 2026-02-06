@@ -9,25 +9,31 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import json
 
-# 1. 초기 설정 (페이지 제목에 버전 명시)
-st.set_page_config(page_title="Wonju AI Quant Lab v4.4", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v4.6: 모델 선택 기능 추가)
+st.set_page_config(page_title="Wonju AI Quant Lab v4.6", layout="wide", page_icon="💎")
 
-# 모델 로드 (안전 장치 포함)
-def get_stable_model():
+# [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
+def get_available_ai_models():
     try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target = 'models/gemini-1.5-flash'
-        return genai.GenerativeModel(target if target in available_models else available_models[0])
+        # generateContent를 지원하는 모델 리스트 확보
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # 선호도 순서대로 정렬 (Pro > Flash > Legacy Pro)
+        priority = ['models/gemini-1.5-pro', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        sorted_models = [p for p in priority if p in models]
+        # 리스트에 없는 기타 모델들 추가
+        remaining = [m for m in models if m not in priority]
+        return sorted_models + remaining
     except Exception:
-        return genai.GenerativeModel('gemini-pro')
+        return ['gemini-pro']
 
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    model = get_stable_model()
+    available_models = get_available_ai_models()
 else:
     st.error("⚠️ secrets.toml에 GOOGLE_API_KEY가 없습니다.")
+    available_models = []
 
-# 2. 펀더멘털 데이터 수집 (캐싱 적용)
+# 2. 데이터 캐싱 및 초기화
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_stock_info(symbol):
     try:
@@ -38,14 +44,13 @@ def get_stock_info(symbol):
     except Exception:
         return None
 
-# 3. 펀더멘털 지표 시각화 (화면 상단 배치용)
+# 3. 펀더멘털 지표 시각화
 def display_fundamental_metrics(ticker_symbol):
     info = get_stock_info(ticker_symbol)
     if info is None:
         st.warning(f"⚠️ '{ticker_symbol}' 정보를 불러올 수 없습니다.")
         return
 
-    # 화폐 단위 처리
     currency = info.get('currency', 'KRW')
     market_cap = info.get('marketCap', 0)
     if currency == 'KRW':
@@ -85,7 +90,7 @@ def get_robust_news(ticker):
     except Exception:
         return "뉴스를 불러오는 중 오류가 발생했습니다."
 
-# 6. 감성 분석 게이지 차트
+# 6. 게이지 차트
 def create_sentiment_gauge(score):
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
@@ -127,6 +132,21 @@ def get_advanced_data(ticker, period):
 # --- 메인 실행 ---
 with st.sidebar:
     st.header("🔍 원주 퀀트 연구소")
+    
+    # [UX 개선] AI 모델 선택기 추가
+    st.subheader("🤖 AI 모델 설정")
+    selected_model_name = st.selectbox(
+        "사용할 분석 엔진 (Brain)",
+        options=available_models,
+        help="Pro 모델이 가장 똑똑하지만 느릴 수 있고, Flash 모델은 빠릅니다."
+    )
+    
+    # [디버깅] 캐시 삭제 버튼
+    if st.button("🗑️ 데이터 캐시 초기화"):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.divider()
     target_ticker = st.text_input("종목 코드", value="005930.KS").upper()
     period_choice = st.selectbox("기간", ["6mo", "1y", "3y"])
     sheet_url = st.text_input("구글 시트 URL", value="https://docs.google.com/spreadsheets/d/1cDwpOaZfEDJY6v7aZa92A9KgRHFqT8S7jy9jywc5rRY/edit?usp=sharing")
@@ -136,14 +156,13 @@ df = get_advanced_data(target_ticker, period_choice)
 if df is not None:
     last = df.iloc[-1]
     
-    # [버전 확인용 제목]
-    st.title(f"🔥 {target_ticker} Pro Dashboard v4.4 (Final)")
+    st.title(f"📈 {target_ticker} Pro Dashboard v4.6")
     
-    # 1. 펀더멘털 분석 (상단)
+    # 1. 펀더멘털 분석
     display_fundamental_metrics(target_ticker)
 
     # 2. 차트 분석
-    st.subheader("📈 기술적 차트")
+    st.subheader("📊 기술적 분석 차트")
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.2, 0.3], vertical_spacing=0.03)
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="주가"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], name="상단", line=dict(dash='dot', color='white')), row=1, col=1)
@@ -156,16 +175,16 @@ if df is not None:
     fig.update_layout(height=800, template="plotly_dark", xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # 3. AI 분석 (결과 고정 Fix 적용)
+    # 3. AI 분석
     st.divider()
-    st.subheader("📢 AI 정밀 분석")
+    st.subheader(f"📢 AI 정밀 분석 (Engine: {selected_model_name.split('/')[-1]})")
     
     if st.button("🤖 뉴스 감성 + 전략 분석 실행", type="primary", use_container_width=True):
-        with st.spinner("AI가 분석 중입니다..."):
+        with st.spinner(f"{selected_model_name} 엔진이 데이터를 분석 중입니다..."):
             news_headlines = get_robust_news(target_ticker)
             
-            # [핵심] 일관된 결과를 위해 temperature=0.0 설정 (필수)
-            # dictionary 형태로 전달하여 호환성 문제 해결
+            # 선택된 모델로 인스턴스 생성
+            active_model = genai.GenerativeModel(selected_model_name)
             gen_config = {"temperature": 0.0}
 
             sentiment_prompt = f"""
@@ -174,31 +193,31 @@ if df is not None:
             """
             
             try:
-                # 1단계: 점수 산출
-                res = model.generate_content(sentiment_prompt, generation_config=gen_config)
+                # 1단계: 감성 분석
+                res = active_model.generate_content(sentiment_prompt, generation_config=gen_config)
                 clean_json = res.text.replace('```json', '').replace('```', '')
                 data = json.loads(clean_json)
                 score = data.get('score', 50)
                 
                 col_g, col_t = st.columns([1, 2])
                 with col_g: st.plotly_chart(create_sentiment_gauge(score), use_container_width=True)
-                with col_t: st.info(f"{data.get('reason')} (점수: {score})")
+                with col_t: st.info(f"{data.get('reason')} (감성 점수: {score})")
 
-                # 2단계: 전략 수립
+                # 2단계: 종합 전략
                 final_prompt = f"""
-                당신은 냉철한 퀀트 트레이더입니다. 감정을 배제하고 데이터에 기반한 결론만 내리세요.
+                당신은 냉철한 퀀트 트레이더입니다. {selected_model_name}의 논리력을 발휘하여 답변하세요.
                 데이터: 현재가 {last['Close']}, RSI {last['RSI']:.1f}, 뉴스점수 {score}
-                뉴스내용: {data.get('reason')}
-                결론을 [강력 매수/분할 매수/관망/매도] 중 하나로 시작하고, 3줄로 요약하세요.
+                뉴스요약: {data.get('reason')}
+                결론을 [강력 매수/분할 매수/관망/매도] 중 하나로 시작하고, 퀀트적 근거를 포함하여 3줄로 요약하세요.
                 """
-                final_res = model.generate_content(final_prompt, generation_config=gen_config)
+                final_res = active_model.generate_content(final_prompt, generation_config=gen_config)
                 st.write("### 🗣️ 트레이더 의견")
-                st.write(final_res.text)
+                st.success(final_res.text)
 
             except Exception as e:
-                st.error(f"분석 오류: {e}")
+                st.error(f"분석 오류 ({selected_model_name}): {e}")
 
-    # 4. 저장 (Expander로 숨김 처리)
+    # 4. 저장
     with st.expander("💾 투자 기록 저장"):
         if st.button("구글 시트에 현재 상태 저장"):
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
