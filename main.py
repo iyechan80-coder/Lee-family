@@ -10,8 +10,8 @@ import google.generativeai as genai
 import json
 import time
 
-# 1. 초기 설정 (버전 v5.4: 하이브리드 배포 및 원클릭 공유 최적화)
-st.set_page_config(page_title="Wonju AI Quant Lab v5.4", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v5.5: 뉴스 파싱 안정성 강화 및 데이터팩 레이아웃 최적화)
+st.set_page_config(page_title="Wonju AI Quant Lab v5.5", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
@@ -84,7 +84,7 @@ def save_to_google_sheet(url, data):
     except Exception:
         return False
 
-# 5. 뉴스 가져오기 (재시도 로직 포함)
+# 5. 뉴스 가져오기 (v5.5: 데이터 구조 결함 방어 로직 강화)
 def get_robust_news(ticker):
     max_retries = 2
     for attempt in range(max_retries):
@@ -92,11 +92,25 @@ def get_robust_news(ticker):
             stock = yf.Ticker(ticker)
             if attempt > 0: time.sleep(1)
             news_data = stock.news
-            if news_data:
-                return "\n".join([f"- {n['title']} ({n.get('publisher', 'News')})" for n in news_data[:5]])
+            
+            # 뉴스 데이터가 리스트인지 확인
+            if isinstance(news_data, list) and len(news_data) > 0:
+                news_list = []
+                for n in news_data[:5]:
+                    if isinstance(n, dict):
+                        # .get()을 사용하여 키 부재 에러 방지 (핵심 보완)
+                        title = n.get('title', '제목 정보 없음')
+                        publisher = n.get('publisher', '출처 미상')
+                        news_list.append(f"- {title} ({publisher})")
+                
+                if news_list:
+                    return "\n".join(news_list)
+            
+            return "[데이터 없음] 현재 야후 파이낸스에 등록된 뉴스가 없습니다."
+            
         except Exception as e:
             if attempt == max_retries - 1:
-                return f"[시스템 오류] 뉴스 수신 실패 ({str(e)})"
+                return f"[시스템 오류] 뉴스 수신 일시 장애 (사유: {str(e)})"
             continue
     return "[데이터 없음] 최신 뉴스가 없습니다."
 
@@ -183,7 +197,7 @@ if df is not None:
         price_change = 0
         pct_change = 0
 
-    st.title(f"📈 {target_ticker} Pro Dashboard v5.4")
+    st.title(f"📈 {target_ticker} Pro Dashboard v5.5")
     
     st.markdown("### 💰 현재 주가")
     st.metric(
@@ -221,7 +235,7 @@ if df is not None:
     fig.update_layout(height=800, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
-    # [v5.4] 지인 공유용 가이드 및 원클릭 복사 최적화
+    # [v5.5] 지인 공유용 가이드 및 원클릭 복사 최적화
     st.divider()
     st.subheader("💎 원주 퀀트 연구소 이용 가이드")
     
@@ -231,7 +245,6 @@ if df is not None:
         st.markdown("#### 1. 전문가 모드 활성화 (System Prompt)")
         st.caption("오른쪽 상단의 📄(복사) 버튼을 눌러 지인에게 전달하거나 본인의 제미나이(Gems)에 붙여넣으세요.")
         
-        # 실제 System Prompt 전체 내용
         full_system_prompt = """**[Identity & Role]**
 당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 역할은 사용자가 제공하는 **[실시간 데이터 팩]**을 기반으로, '구글 검색' 도구를 활용하여 정밀한 투자 시나리오를 설계하는 것입니다. 감정적인 희망 회로를 배제하고, 오직 데이터와 논리에 기반한 냉철한 전략만을 제시하십시오.
 
@@ -279,8 +292,14 @@ if df is not None:
         
         sector_guidance = {
             "Technology": "반도체 사이클 및 기술 격차 중점 점검.",
-            "Financial Services": "금리 사이클 및 주주 환원 정책 점검."
+            "Financial Services": "금리 사이클 및 주주 환원 정책 점검.",
+            "Consumer Defensive": "원자재 가격 변동성 및 내수 소비 트렌드 점검."
         }.get(sector, "업계 경쟁력 및 시장 점유율 점검.")
+
+        # [v5.5 개선] 뉴스 오류 가이드 자동 강화
+        news_instruction = ""
+        if "데이터 없음" in news_headlines or "시스템 오류" in news_headlines:
+            news_instruction = f"⚠️ [주의] 뉴스 수집 장애가 감지되었습니다. 분석 전 구글 검색으로 '{target_ticker} 최신 리스크'와 '섹터 현황'을 직접 검색하여 보완하세요.\n"
 
         master_prompt = f"""
 [원주 퀀트 연구소 - 실시간 데이터 팩: {target_ticker}]
@@ -292,6 +311,8 @@ if df is not None:
 - 대시보드 뉴스 요약:
 {news_headlines}
 
+{news_instruction}
+---
 [심층 분석 지침]
 1. 데이터 그라운딩: 지표와 뉴스 간 괴리 분석.
 2. 섹터 특화 분석 ({sector}): {sector_guidance}
@@ -311,7 +332,8 @@ if df is not None:
             sentiment_prompt = f"Analyze sentiment for {target_ticker}. Headlines: {news_headlines}. Return JSON: {{'score': 0-100, 'reason': '...'}}"
             try:
                 res = active_model.generate_content(sentiment_prompt, generation_config={"temperature": 0.0})
-                data = json.loads(res.text.replace('```json', '').replace('```', ''))
+                clean_json = res.text.replace('```json', '').replace('```', '')
+                data = json.loads(clean_json)
                 score = data.get('score', 50)
                 
                 col_g, col_t = st.columns([1, 2])
