@@ -9,8 +9,8 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import json
 
-# 1. 초기 설정 (버전 v4.6: 모델 선택 기능 추가)
-st.set_page_config(page_title="Wonju AI Quant Lab v4.6", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v4.7: UX 개선 및 주가 표시)
+st.set_page_config(page_title="Wonju AI Quant Lab v4.7", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
@@ -133,12 +133,25 @@ def get_advanced_data(ticker, period):
 with st.sidebar:
     st.header("🔍 원주 퀀트 연구소")
     
-    # [UX 개선] AI 모델 선택기 추가
+    # [UX 개선] AI 모델 선택기 (친절한 이름 적용)
     st.subheader("🤖 AI 모델 설정")
+    
+    # 모델명 매핑 딕셔너리
+    model_aliases = {
+        'models/gemini-1.5-pro': '🧠 Premium (심층 추론 - 가장 똑똑함)',
+        'models/gemini-1.5-flash': '⚡ Flash (빠른 속도 - 가성비)',
+        'models/gemini-pro': '🤖 Legacy (구형 모델)'
+    }
+    
+    # 선택 상자에 표시될 이름을 변환하는 함수
+    def format_model_name(option):
+        return model_aliases.get(option, option) # 매핑에 없으면 원래 이름 사용
+
     selected_model_name = st.selectbox(
         "사용할 분석 엔진 (Brain)",
         options=available_models,
-        help="Pro 모델이 가장 똑똑하지만 느릴 수 있고, Flash 모델은 빠릅니다."
+        format_func=format_model_name, # 화면 표시용 이름 변환
+        help="Premium은 복잡한 추론에 강하고, Flash는 속도가 빠릅니다."
     )
     
     # [디버깅] 캐시 삭제 버튼
@@ -156,7 +169,26 @@ df = get_advanced_data(target_ticker, period_choice)
 if df is not None:
     last = df.iloc[-1]
     
-    st.title(f"📈 {target_ticker} Pro Dashboard v4.6")
+    # [NEW] 현재 주가 및 등락률 계산
+    current_price = last['Close']
+    if len(df) >= 2:
+        prev_price = df.iloc[-2]['Close']
+        price_change = current_price - prev_price
+        pct_change = (price_change / prev_price) * 100
+    else:
+        price_change = 0
+        pct_change = 0
+
+    st.title(f"📈 {target_ticker} Pro Dashboard v4.7")
+    
+    # [NEW] 메인 가격 표시 (가장 눈에 띄게)
+    st.markdown("### 💰 현재 주가")
+    st.metric(
+        label="Price",
+        value=f"{current_price:,.0f}",
+        delta=f"{price_change:,.0f} ({pct_change:.2f}%)"
+    )
+    st.divider()
     
     # 1. 펀더멘털 분석
     display_fundamental_metrics(target_ticker)
@@ -177,10 +209,12 @@ if df is not None:
 
     # 3. AI 분석
     st.divider()
-    st.subheader(f"📢 AI 정밀 분석 (Engine: {selected_model_name.split('/')[-1]})")
+    # 표시용 이름을 가져와서 타이틀에 보여줌
+    display_name = model_aliases.get(selected_model_name, selected_model_name)
+    st.subheader(f"📢 AI 정밀 분석 (Engine: {display_name})")
     
     if st.button("🤖 뉴스 감성 + 전략 분석 실행", type="primary", use_container_width=True):
-        with st.spinner(f"{selected_model_name} 엔진이 데이터를 분석 중입니다..."):
+        with st.spinner(f"{display_name} 엔진이 데이터를 분석 중입니다..."):
             news_headlines = get_robust_news(target_ticker)
             
             # 선택된 모델로 인스턴스 생성
