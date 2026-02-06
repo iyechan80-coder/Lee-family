@@ -10,8 +10,8 @@ import google.generativeai as genai
 import json
 import time
 
-# 1. 초기 설정 (버전 v5.1 Final: 뉴스 재시도 로직 및 안정성 강화)
-st.set_page_config(page_title="Wonju AI Quant Lab v5.1", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v5.2 Final: 섹터별 맞춤형 Gems 프롬프트 탑재)
+st.set_page_config(page_title="Wonju AI Quant Lab v5.2", layout="wide", page_icon="💎")
 
 # [Engineering Standard] 가용 모델 리스트 및 최적 모델 검색 함수
 def get_available_ai_models():
@@ -84,28 +84,20 @@ def save_to_google_sheet(url, data):
     except Exception:
         return False
 
-# [Engineering Standard] 뉴스 가져오기 로직 보완 (v5.1 Final: 재시도 로직 추가)
+# 5. 뉴스 가져오기 (재시도 로직 포함)
 def get_robust_news(ticker):
-    # 최대 2번 재시도하여 일시적 네트워크 오류 극복
     max_retries = 2
     for attempt in range(max_retries):
         try:
             stock = yf.Ticker(ticker)
-            # 첫 시도가 아니면 잠시 대기 후 요청
-            if attempt > 0:
-                time.sleep(1)
-            
+            if attempt > 0: time.sleep(1)
             news_data = stock.news
-            
             if news_data:
                 return "\n".join([f"- {n['title']} ({n.get('publisher', 'News')})" for n in news_data[:5]])
-            
         except Exception as e:
-            # 마지막 시도에서도 실패하면 에러 메시지 반환
             if attempt == max_retries - 1:
                 return f"[시스템 오류] 뉴스 데이터 수신 실패 ({str(e)})"
             continue
-            
     return "[데이터 없음] 현재 야후 파이낸스에 등록된 최신 뉴스가 없습니다."
 
 # 6. 게이지 차트
@@ -191,7 +183,7 @@ if df is not None:
         price_change = 0
         pct_change = 0
 
-    st.title(f"📈 {target_ticker} Pro Dashboard v5.1 Final")
+    st.title(f"📈 {target_ticker} Pro Dashboard v5.2")
     
     st.markdown("### 💰 현재 주가")
     st.metric(
@@ -211,8 +203,6 @@ if df is not None:
     fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], name="하단", line=dict(dash='dot', color='white')), row=1, col=1)
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="거래량"), row=2, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI"), row=3, col=1)
-    fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=70, y1=70, line=dict(color="red", dash="dot"), row=3, col=1)
-    fig.add_shape(type="line", x0=df.index[0], x1=df.index[-1], y0=30, y1=30, line=dict(color="green", dash="dot"), row=3, col=1)
     
     fig.update_xaxes(
         rangeselector=dict(
@@ -232,63 +222,73 @@ if df is not None:
     # 3. AI 분석 섹션
     st.divider()
     
-    # [수정] Gems 전용 데이터 팩 (v5.1: 뉴스 누락 시 가이드 자동 추가)
+    # [v5.2] Gems 딥 리서치 프롬프트 고도화 (섹터 맞춤형)
     st.subheader("🚀 Deep Research 연동 (Gems)")
-    with st.expander("🔍 Gems 심층 분석용 데이터 팩 추출 (클릭하여 열기)", expanded=False):
-        st.write("아래 내용을 복사하여 Gems에 붙여넣으세요. 뉴스 수집 실패 시 자동으로 보완 가이드가 포함됩니다.")
+    with st.expander("🔍 Gems 심층 분석용 '마스터 프롬프트' 추출", expanded=True):
+        st.write("아래 프롬프트는 대시보드의 실시간 수치와 섹터 특성을 반영하여 생성되었습니다.")
         
         news_headlines = get_robust_news(target_ticker)
         
-        # 뉴스에 오류가 포함되어 있는지 체크
+        # 뉴스 오류 처리
         news_instruction = ""
         if "데이터 없음" in news_headlines or "시스템 오류" in news_headlines:
-            news_instruction = f"⚠️ 현재 실시간 뉴스 수집에 실패했습니다. 분석 전 반드시 구글 검색으로 '{target_ticker} 최신 뉴스'와 '반도체 업황'을 검색하여 팩트를 보완한 뒤 분석을 시작해줘."
+            news_instruction = f"⚠️ [주의] 뉴스 수집 API 장애로 최신 뉴스가 누락되었습니다. 반드시 구글 검색 도구를 사용하여 '{target_ticker} 최신 이슈'와 '동종 업계 동향'을 직접 검색한 뒤 분석에 반영하세요."
 
-        gems_data_pack = f"""
-[원주 퀀트 연구소 - 실시간 데이터 팩: {target_ticker}]
+        # 섹터 정보 및 맞춤형 가이드
+        sector = info_data.get('sector', 'Unknown')
+        sector_guidance = {
+            "Technology": "반도체 사이클(HBM, AI 수요), 빅테크 CAPEX 지출 추이, 기술 격차 및 수율 문제를 중점적으로 검색하여 반영할 것.",
+            "Financial Services": "금리 인하/인상 사이클에 따른 순이자마진(NIM) 변화, 부동산 PF 리스크, 주주 환원 정책(밸류업)을 확인할 것.",
+            "Energy": "국제 유가 및 천연가스 가격 추이, 신재생 에너지 정책 변화, 지정학적 리스크를 검색할 것.",
+            "Healthcare": "신약 파이프라인 임상 결과, FDA 승인 여부, 특허 만료 이슈를 집중 점검할 것.",
+            "Consumer Cyclical": "소비 심리 지수, 중국/미국 등 주요 수출국의 경기 부양책 및 판매 실적을 확인할 것."
+        }.get(sector, "동종 업계 경쟁사 대비 밸류에이션 매력도와 산업 내 시장 점유율 변화를 검색할 것.")
+
+        master_prompt = f"""
+당신은 '원주 퀀트 연구소'의 수석 애널리스트이자 거시경제 전략가입니다.
+아래 [실시간 데이터 팩]을 바탕으로 '구글 검색' 도구를 적극 활용하여 심층 분석 리포트를 작성하세요.
+
+### [실시간 데이터 팩: {target_ticker}]
 - 기준일: {datetime.datetime.now().strftime('%Y-%m-%d')}
 - 현재가: {current_price:,.0f} ({pct_change:.2f}%)
-- 펀더멘털: PER {info_data.get('trailingPE', 'N/A')}, PBR {info_data.get('priceToBook', 'N/A')}, 배당 {info_data.get('dividendYield', 0)*100:.2f}%
-- 기술적 지표: RSI(14) {last['RSI']:.1f}, 볼린저밴드 상단 {last['Upper']:,.0f} / 하단 {last['Lower']:,.0f}
-- 대시보드 뉴스 요약:
+- 펀더멘털: PER {info_data.get('trailingPE', 'N/A')}, PBR {info_data.get('priceToBook', 'N/A')}, 배당수익률 {info_data.get('dividendYield', 0)*100:.2f}%
+- 섹터(업종): {sector}
+- 기술적 상태: RSI(14) {last['RSI']:.1f}, 볼린저밴드 위치(상단 {last['Upper']:,.0f} / 하단 {last['Lower']:,.0f})
+- 대시보드 수집 뉴스:
 {news_headlines}
 
 {news_instruction}
 
-[질문 가이드]
-위 실시간 데이터를 기반으로, '구글 검색'을 활용하여 다음 사항을 심층 분석해줘:
-1. 매크로 연결: 현재 매크로 상황(금리, 환율)이 이 종목의 기술적 과매수/과매도 상태와 어떻게 충돌하거나 공명하고 있는가?
-2. 섹터 분석: 경쟁사 대비 펀더멘털 지표의 우위 점검 및 향후 1분기 예상되는 섹터 내 점유율 변화 리스크.
-3. 시나리오: 위 뉴스들이 일시적 노이즈인지, 장기적 펀더멘털 훼손인지 논리적으로 비판해줘.
+### [심층 분석 지침 (Deep Dive Protocol)]
+1. **데이터 그라운딩 (Reality Check):** 위 기술적 지표(RSI, BB)가 시사하는 방향(과열/침체)이 현재 시장의 매크로 환경(금리, 환율)과 일치하는지 불일치하는지 분석하세요.
+2. **섹터 특화 분석 ({sector}):** {sector_guidance}
+3. **악마의 변호인 (Devil's Advocate):** 현재 데이터가 긍정적이라도, 주가를 급락시킬 수 있는 '숨겨진 리스크(Black Swan)' 2가지를 반드시 찾아내어 경고하세요.
+4. **최종 투자 판단:** [강력 매수 / 분할 매수 / 관망 / 매도] 중 하나를 명확히 선택하고, 그 논리를 초보자도 이해하기 쉬운 비유를 들어 3문장으로 요약하세요.
         """
-        st.code(gems_data_pack, language="markdown")
-        st.info("💡 위 텍스트를 복사한 뒤 Gems에 접속하여 '구글 검색' 기능을 켜고 질문하세요.")
+        st.code(master_prompt, language="markdown")
+        st.info("💡 위 마스터 프롬프트를 복사하여 Gems에 붙여넣으세요. 구글 검색 기능을 활용해 더 깊은 통찰을 얻을 수 있습니다.")
 
     st.divider()
     
     # 대시보드 내장 빠른 분석
     display_name = format_model_name(selected_model_name)
-    st.subheader(f"📢 대시보드 내장 분석 (Engine: {display_name})")
+    st.subheader(f"📢 대시보드 내장 빠른 전략 (Engine: {display_name})")
     
-    if st.button("🤖 실시간 기술적 전략 분석", type="primary", use_container_width=True):
-        with st.spinner(f"{display_name} 엔진 분석 중..."):
-            news_headlines = get_robust_news(target_ticker)
+    if st.button("🤖 실시간 기술적 전략 브리핑", type="primary", use_container_width=True):
+        with st.spinner(f"{display_name} 분석 중..."):
             active_model = genai.GenerativeModel(selected_model_name)
-            gen_config = {"temperature": 0.0}
-            
             sentiment_prompt = f"Analyze sentiment for {target_ticker}. Headlines: {news_headlines}. Return JSON: {{'score': 0-100, 'reason': '...'}}"
             try:
-                res = active_model.generate_content(sentiment_prompt, generation_config=gen_config)
-                clean_json = res.text.replace('```json', '').replace('```', '')
-                data = json.loads(clean_json)
+                res = active_model.generate_content(sentiment_prompt, generation_config={"temperature": 0.0})
+                data = json.loads(res.text.replace('```json', '').replace('```', ''))
                 score = data.get('score', 50)
                 
                 col_g, col_t = st.columns([1, 2])
                 with col_g: st.plotly_chart(create_sentiment_gauge(score), use_container_width=True)
                 with col_t: st.info(f"{data.get('reason')} (점수: {score})")
 
-                final_prompt = f"당신은 퀀트입니다. 가격 {last['Close']}, RSI {last['RSI']:.1f}, 뉴스점수 {score}를 근거로 [매수/관망/매도] 의견을 3줄 요약하세요."
-                final_res = active_model.generate_content(final_prompt, generation_config=gen_config)
+                final_prompt = f"퀀트 관점에서 가격 {last['Close']}, RSI {last['RSI']:.1f}, 뉴스점수 {score}를 기반으로 대응 전략을 3줄 요약하세요."
+                final_res = active_model.generate_content(final_prompt, generation_config={"temperature": 0.0})
                 st.success(final_res.text)
                 st.toast(f"✅ {target_ticker} 분석 완료!", icon="🎉")
             except Exception as e:
