@@ -9,7 +9,7 @@ import time
 import re
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.7", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.8", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정 - 가시성 극대화 (White Theme)]
 st.markdown("""
@@ -187,67 +187,71 @@ class QuantLabEngine:
         return cum_market, cum_strategy
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret):
-        """tabulate 의존성 제거 및 데이터 팩 생성"""
+        """[개선] 한글 구조화 및 고품질 데이터 팩 생성"""
         last = df.iloc[-1]
         corr_sent = df['Close'].corr(df['Sentiment'])
         
-        # .to_string() 사용으로 ImportError 방지
         recent_trend = df[['Close', 'RSI', 'Sentiment']].tail(5).to_string()
         
         report = f"""
-### 💎 Wonju Quant Lab: Deep Dive Report ({ticker})
-**Date:** {datetime.datetime.now().strftime('%Y-%m-%d')}
+### 💎 원주 퀀트 연구소: 심층 분석 데이터 팩 ({ticker})
+**분석 일시:** {datetime.datetime.now().strftime('%Y-%m-%d')}
 
-#### 1. Technical & Strategy Summary
-- **Current Price:** ${last['Close']:.2f}
+#### 1. 기술적 지표 및 백테스트 결과
+- **현재가 (Current Price):** ${last['Close']:.2f}
 - **RSI (14):** {last['RSI']:.2f}
-- **Strategy Return:** {s_ret*100:.2f}% (vs Buy&Hold: {m_ret*100:.2f}%)
-- **Bollinger Band:** {'Above Upper' if last['Close'] > last['BB_High'] else 'Below Lower' if last['Close'] < last['BB_Low'] else 'Inside'}
+- **RSI 전략 수익률 (Strategy Return):** {s_ret*100:.2f}%
+- **시장 수익률 (Buy & Hold):** {m_ret*100:.2f}%
+- **볼린저 밴드 위치:** {'밴드 상단 돌파' if last['Close'] > last['BB_High'] else '밴드 하단 돌파' if last['Close'] < last['BB_Low'] else '밴드 내부'}
 
-#### 2. Macro & Sentiment
-- **Sentiment Score:** {last['Sentiment']:.3f} (Corr: {corr_sent:.3f})
-- **VIX:** {last.get('VIX', 0):.2f}
-- **US 10Y:** {last.get('US_10Y', 0):.2f}%
-- **USD/KRW:** {last.get('USD_KRW', 0):.2f}
+#### 2. 매크로 및 감성 분석 데이터
+- **뉴스 감성 점수 (Sentiment):** {last['Sentiment']:.3f} (주가 상관계수: {corr_sent:.3f})
+- **공포 지수 (VIX):** {last.get('VIX', 0):.2f}
+- **미 국채 10년물 금리 (US 10Y):** {last.get('US_10Y', 0):.2f}%
+- **원/달러 환율 (USD/KRW):** {last.get('USD_KRW', 0):.2f}
 
-#### 3. Recent Trend (Last 5 Days)
+#### 3. 최근 5거래일 추세 (Latest Trend)
 {recent_trend}
 
 ---
-*Prompt for Gems: "Analyze this data. Check for RSI divergences and suggest a strategy based on VIX levels."*
+*Gems 프롬프트 가이드: "위 퀀트 데이터를 분석하여, RSI와 감성 점수 사이의 괴리(Divergence)가 있는지 확인하고 VIX 지수를 고려한 다음 주 위험 관리 전략을 제안해줘."*
 """
         return report
 
     def plot_dashboard(self, df, ticker, rsi_buy, rsi_sell):
-        """가시성 개선 차트 + RSI 기준선 연동"""
+        """가시성 개선 차트 + RSI 직관적 타이틀 수정"""
         fig = make_subplots(
             rows=4, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.06, 
             row_heights=[0.5, 0.15, 0.15, 0.2],
-            subplot_titles=(f"{ticker} Price & BB", "Volume", f"RSI (Buy < {rsi_buy}, Sell > {rsi_sell})", "Sentiment & Macro")
+            subplot_titles=(
+                f"{ticker} 주가 및 볼린저 밴드", 
+                "거래량 (Volume)", 
+                f"RSI 지표 (매수 기준 < {rsi_buy}, 매도 기준 > {rsi_sell})", 
+                "뉴스 감성 및 VIX 지표"
+            )
         )
 
         # 1. Price
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Close", line=dict(color='black', width=1.5)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_High'], name="BB High", line=dict(dash='dot', color='gray')), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Low'], name="BB Low", line=dict(dash='dot', color='gray'), fill='tonexty', fillcolor='rgba(200,200,200,0.2)'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA 20", line=dict(color='orange', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="종가", line=dict(color='black', width=1.5)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_High'], name="BB 상단", line=dict(dash='dot', color='gray')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Low'], name="BB 하단", line=dict(dash='dot', color='gray'), fill='tonexty', fillcolor='rgba(200,200,200,0.2)'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20일 이평선", line=dict(color='orange', width=1)), row=1, col=1)
 
         # 2. Volume
         colors = ['red' if r['Open'] > r['Close'] else 'green' for i, r in df.iterrows()]
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color=colors), row=2, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="거래량", marker_color=colors), row=2, col=1)
         
         # 3. RSI
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='purple', width=1.5)), row=3, col=1)
-        # 사용자 설정 기준선 표시
-        fig.add_hline(y=rsi_sell, line_dash="dash", line_color="red", annotation_text="Sell", row=3, col=1)
-        fig.add_hline(y=rsi_buy, line_dash="dash", line_color="green", annotation_text="Buy", row=3, col=1)
+        fig.add_hline(y=rsi_sell, line_dash="dash", line_color="red", annotation_text="Sell Threshold", row=3, col=1)
+        fig.add_hline(y=rsi_buy, line_dash="dash", line_color="green", annotation_text="Buy Threshold", row=3, col=1)
 
         # 4. Sentiment vs VIX
-        fig.add_trace(go.Bar(x=df.index, y=df['Sentiment'], name="Sentiment", marker_color='blue', opacity=0.5), row=4, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['Sentiment'], name="감성 점수", marker_color='blue', opacity=0.5), row=4, col=1)
         if 'VIX' in df.columns:
-            fig.add_trace(go.Scatter(x=df.index, y=df['VIX'], name="VIX", line=dict(color='red', width=1), yaxis='y2'), row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['VIX'], name="VIX 지수", line=dict(color='red', width=1), yaxis='y2'), row=4, col=1)
 
         fig.update_layout(
             height=1000, 
@@ -259,51 +263,51 @@ class QuantLabEngine:
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 Wonju AI Quant Lab (v6.7)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.8)")
 
 # 사이드바 설정
 with st.sidebar:
-    st.header("⚙️ Control Panel")
-    ticker = st.text_input("Ticker", "TSLA").upper()
-    period = st.selectbox("Period", ["1y", "3y", "5y"], index=1)
+    st.header("⚙️ 제어 패널")
+    ticker = st.text_input("티커 입력 (예: TSLA)", "TSLA").upper()
+    period = st.selectbox("분석 기간", ["1y", "3y", "5y"], index=1)
     
     st.markdown("---")
-    st.subheader("🛠️ Strategy Settings")
-    rsi_buy = st.slider("RSI Buy Threshold", 10, 40, 30) # 매수 기준 (기본 30)
-    rsi_sell = st.slider("RSI Sell Threshold", 60, 90, 70) # 매도 기준 (기본 70)
+    st.subheader("🛠️ 전략 설정 (RSI)")
+    rsi_buy = st.slider("매수 임계값 (RSI < X)", 10, 40, 30)
+    rsi_sell = st.slider("매도 임계값 (RSI > X)", 60, 90, 70)
 
 engine = QuantLabEngine()
-st.caption(f"Engine Status: {engine.analyzer_type} | Mode: Interactive Backtest")
+st.caption(f"엔진 상태: {engine.analyzer_type} | 모드: 인터랙티브 백테스트")
 
-if st.button("🚀 Run Full Analysis", type="primary"):
-    with st.spinner("Processing Market Data & Simulating Strategy..."):
+if st.button("🚀 전체 분석 실행", type="primary"):
+    with st.spinner("시장 데이터 처리 및 전략 시뮬레이션 중..."):
         df = engine.fetch_market_data(ticker, period)
         
         if df is not None and not df.empty:
             df = engine.calculate_indicators(df)
             
-            # 동적 백테스팅 수행 (슬라이더 값 적용)
+            # 동적 백테스팅 수행
             m_ret, s_ret = engine.run_backtest(df, rsi_buy, rsi_sell)
             
             # KPI 출력
             last = df.iloc[-1]
             k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("Price", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
-            k2.metric("RSI Strategy", f"{s_ret*100:.1f}%", f"vs Mkt {m_ret*100:.1f}%")
-            k3.metric("Sentiment", f"{last['Sentiment']:.2f}")
-            k4.metric("USD/KRW", f"₩{last.get('USD_KRW', 0):,.0f}")
-            k5.metric("VIX", f"{last.get('VIX', 0):.2f}")
+            k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
+            k2.metric("RSI 전략 수익률", f"{s_ret*100:.1f}%", f"시장대비 {m_ret*100:.1f}%")
+            k3.metric("뉴스 감성", f"{last['Sentiment']:.2f}")
+            k4.metric("원/달러 환율", f"₩{last.get('USD_KRW', 0):,.0f}")
+            k5.metric("공포 지수 (VIX)", f"{last.get('VIX', 0):.2f}")
             
-            # 차트 (사용자 설정 기준선 적용)
+            # 차트 출력
             engine.plot_dashboard(df, ticker, rsi_buy, rsi_sell)
             
             # Gems Pack
             st.markdown("---")
-            st.subheader("📦 Gems Data Pack")
+            st.subheader("📦 Gems 데이터 팩")
             c1, c2 = st.columns([3, 1])
             with c1:
-                st.text_area("Copy this for Gems/LLM:", engine.generate_gems_pack(df, ticker, m_ret, s_ret), height=250)
+                st.text_area("Gems/LLM 전송용 데이터:", engine.generate_gems_pack(df, ticker, m_ret, s_ret), height=250)
             with c2:
-                st.success("✅ Analysis Complete")
+                st.success("✅ 분석 완료")
         else:
             st.error("데이터 수집 실패. 티커를 확인하세요.")
