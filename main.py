@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.17", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.19", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -47,7 +47,6 @@ st.markdown("""
         margin-top: 10px;
         border: 1px dashed #CBD5E0;
     }
-    /* 코드 블록 스타일 조정 */
     .stCodeBlock {
         border: 2px solid #2196F3 !important;
         border-radius: 10px !important;
@@ -147,15 +146,39 @@ class QuantLabEngine:
         df['Signal'] = 0
         df.loc[df['RSI'] < rsi_buy, 'Signal'] = 1
         df.loc[df['RSI'] > rsi_sell, 'Signal'] = -1
+        
         df['Position'] = df['Signal'].replace(0, method='ffill').clip(lower=0)
-        df['Market_Return'] = df['Close'].pct_change()
+        
+        df['Market_Return'] = df['Close'].pct_change().fillna(0)
         df['Strategy_Return'] = df['Position'].shift(1) * df['Market_Return']
-        m_cum = (1 + df['Market_Return'].fillna(0)).cumprod().iloc[-1] - 1
-        s_cum = (1 + df['Strategy_Return'].fillna(0)).cumprod().iloc[-1] - 1
-        return m_cum, s_cum
+        df['Strategy_Return'] = df['Strategy_Return'].fillna(0)
+
+        m_cum = (1 + df['Market_Return']).cumprod().iloc[-1] - 1
+        s_cum = (1 + df['Strategy_Return']).cumprod().iloc[-1] - 1
+
+        cum_equity = (1 + df['Strategy_Return']).cumprod()
+        running_max = cum_equity.cummax()
+        drawdown = (cum_equity - running_max) / running_max
+        mdd = drawdown.min()
+
+        df['Trade'] = df['Position'].diff()
+        entries = df[df['Trade'] == 1].index
+        exits = df[df['Trade'] == -1].index
+        
+        wins = 0
+        total_trades = min(len(entries), len(exits))
+        
+        if total_trades > 0:
+            for i in range(total_trades):
+                if df.loc[exits[i]]['Close'] > df.loc[entries[i]]['Close']:
+                    wins += 1
+            win_rate = (wins / total_trades) * 100
+        else:
+            win_rate = 0.0
+
+        return m_cum, s_cum, mdd, win_rate, total_trades
 
     def save_to_sheets(self, data_dict):
-        """저장 응답값 처리 및 예외 처리"""
         if not HAS_GSPREAD: return False, "라이브러리가 설치되지 않았습니다."
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -172,51 +195,54 @@ class QuantLabEngine:
         except Exception as e:
             return False, f"연동 에러: {str(e)}"
 
-    def generate_gems_pack(self, df, ticker, m_ret, s_ret):
-        """[Elite] 데이터 팩과 프롬프트를 분리하여 반환"""
+    def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades):
+        """[Consolidated] 데이터 팩과 지시사항을 하나의 문자열로 통합 생성"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
         divergence = "Potential Divergence" if price_trend != rsi_trend else "None"
 
-        # 1. 데이터 파트 (Data Only)
-        data_pack = f"""
+        # 하나의 긴 문자열로 통합 (One-Click Copy 지원)
+        final_content = f"""
 [Wonju Quant Lab Analysis Data Pack: {ticker}]
 Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
-#### SECTION A. RAW QUANT DATA (Technical & Macro)
+#### SECTION A. PERFORMANCE METRICS (Advanced)
 - Ticker: {ticker}
 - Price: ${last['Close']:.2f}
 - RSI(14): {last['RSI']:.2f}
-- 3y Strategy Return: {s_ret*100:.2f}% (Market: {m_ret*100:.2f}%)
+- Strategy Return(3y): {s_ret*100:.2f}% (vs Market: {m_ret*100:.2f}%)
+- Max Drawdown (MDD): {mdd*100:.2f}% (Risk Level Check)
+- Win Rate: {win_rate:.1f}% ({trades} Trades Executed)
 - Bollinger Position: {'Over Upper' if last['Close']>last['BB_High'] else 'Under Lower' if last['Close']<last['BB_Low'] else 'Neutral'}
-- Divergence Check: {divergence} (Price: {price_trend}, RSI: {rsi_trend})
+- Divergence Check: {divergence}
+
+#### SECTION B. MACRO & SENTIMENT
 - Fear Index (VIX): {last.get('VIX', 0):.2f}
 - 10Y Bond Yield: {last.get('US_10Y', 0):.2f}%
 - Exchange Rate (USD/KRW): {last.get('USD_KRW', 0):.2f}
+- Sentiment Score: {last['Sentiment']:.3f}
 
-#### SECTION B. RECENT TREND (Last 5 Days)
+#### SECTION C. RECENT TREND (Last 5 Days)
 {df[['Close', 'RSI', 'Sentiment', 'VIX']].tail(5).to_string()}
-"""
 
-        # 2. 프롬프트 파트 (Instruction Only) - 티커 연동 수정
-        system_prompt = f"""
+--------------------------------------------------
 [SYSTEM PROTOCOL: Wonju Quant Strategist]
 당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가입니다. 당신의 최우선 가치는 '원금 보호'입니다.
 위 영문 데이터를 기반으로 아래 4단계 분석 프로세스를 엄격히 수행하십시오.
 
 Phase 1. 능동적 팩트 체크 (뉴스 데이터 부족 시 즉시 '{ticker}' 관련 최신 뉴스 구글 검색 필수 수행)
-Phase 2. 데이터 그라운딩 (RSI/BB와 최신 리서치 간의 괴리 분석)
+Phase 2. 데이터 그라운딩 (MDD, 승률을 고려하여 전략의 안정성을 먼저 평가하십시오. 수익률이 높아도 MDD가 -20% 이상이면 '위험'으로 간주합니다.)
 Phase 3. 리스크 검증 (이 종목을 지금 사면 망하는 이유 2가지를 가장 냉정하게 제시)
 Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
-  - [BUY] 조건: 정배열 유지 + 명확한 모멘텀 + RSI 70 미만
+  - [BUY] 조건: 정배열 유지 + 명확한 모멘텀 + RSI 70 미만 + MDD 안정권
   - [PASS/PROHIBITED] 조건: 위 조건 미달 시 즉시 '매수 금지' 선언 및 진입가 삭제
 
 판단: [강력 매수 / 관망 / 매수 금지] 중 택 1
 가족을 위한 한 줄 브리핑 필수. (예: "상한 사과입니다. 접근 금지.")
 ###DATA_START### [판단] 핵심 근거 요약 ###DATA_END###
 """
-        return data_pack, system_prompt
+        return final_content
 
     def plot_dashboard(self, df, ticker, rsi_buy, rsi_sell):
         fig = make_subplots(
@@ -247,9 +273,8 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.17)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.19)")
 
-# 사이드바
 with st.sidebar:
     st.header("⚙️ 제어 패널")
     ticker = st.text_input("티커 (예: AAPL)", "TSLA").upper()
@@ -257,55 +282,55 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🛠️ 백테스트 설정 (실시간)")
-    # 슬라이더 키 추가로 상태 관리
     rsi_buy = st.slider("RSI 매수 기준 (과매도)", 10, 40, 30, key='rsi_buy_slider')
     rsi_sell = st.slider("RSI 매도 기준 (과매수)", 60, 90, 70, key='rsi_sell_slider')
 
 engine = QuantLabEngine()
 
-# 세션 상태 초기화
 if 'analyzed_data' not in st.session_state:
     st.session_state.analyzed_data = None
 
-# 1. 데이터 수집 버튼 (비용이 큰 작업)
+# 1. 데이터 수집 (고비용)
 if st.button("🚀 전체 분석 실행", type="primary"):
     with st.spinner("수석 전략가 엔진 가동 중..."):
         df = engine.fetch_market_data(ticker, period)
         if df is not None and not df.empty:
             df = engine.calculate_indicators(df)
-            # 여기서는 데이터(df)와 티커만 저장 (수익률 계산은 아래에서 동적으로)
             st.session_state.analyzed_data = {'df': df, 'ticker': ticker}
         else:
             st.error("데이터 수집 실패. 티커를 확인해 주세요.")
 
-# 2. 결과 렌더링 및 동적 백테스트 (저비용 작업)
+# 2. 결과 렌더링 및 동적 백테스트 (저비용)
 if st.session_state.analyzed_data:
     res = st.session_state.analyzed_data
     df, t_name = res['df'], res['ticker']
     
-    # [핵심] 슬라이더 변경 시마다 즉시 재계산 (Dynamic Calculation)
-    m_ret, s_ret = engine.run_backtest(df, rsi_buy, rsi_sell)
+    # 동적 재계산
+    m_ret, s_ret, mdd, win_rate, total_trades = engine.run_backtest(df, rsi_buy, rsi_sell)
     last = df.iloc[-1]
     
     # KPI
-    k1, k2, k3, k4, k5 = st.columns(5)
+    st.markdown("### 📊 Key Performance Indicators")
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
-    # [복구] 존버 수익률 명확히 표시
-    k2.metric("RSI 전략 수익률", f"{s_ret*100:.1f}%", f"존버(Buy&Hold) {m_ret*100:.1f}%")
-    k3.metric("뉴스 감성", f"{last['Sentiment']:.2f}")
-    k4.metric("원/달러", f"₩{last.get('USD_KRW', 0):,.0f}")
-    k5.metric("공포(VIX)", f"{last.get('VIX', 0):.2f}")
+    k2.metric("전략 수익률", f"{s_ret*100:.1f}%", f"존버(Buy&Hold) {m_ret*100:.1f}%")
+    k3.metric("최대 낙폭 (MDD)", f"{mdd*100:.2f}%", "Risk Check", delta_color="inverse")
+    k4.metric("승률 (Win Rate)", f"{win_rate:.1f}%", f"{total_trades}회 매매")
     
-    # 차트
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("뉴스 감성", f"{last['Sentiment']:.2f}")
+    k6.metric("원/달러", f"₩{last.get('USD_KRW', 0):,.0f}")
+    k7.metric("공포(VIX)", f"{last.get('VIX', 0):.2f}")
+    k8.metric("미국채 10년", f"{last.get('US_10Y', 0):.2f}%")
+    
     engine.plot_dashboard(df, t_name, rsi_buy, rsi_sell)
     
-    # [수석 전략가 프로토콜 가이드]
     st.markdown("""
         <div class="gems-guide-main">
             <h2 style='color: #E53E3E;'>🛡️ 수석 트레이딩 전략가 분석 프로토콜</h2>
             <p>본 데이터 팩은 <b>원금 보호</b>를 최우선으로 분석하도록 설계되었습니다. 주변 동료들과 공유 시 아래 단계를 반드시 준수하십시오.</p>
-            <div class="protocol-step"><b>Step 1.</b> 아래 두 개의 박스(데이터, 프롬프트) 우측 상단 <b>📄(복사)</b> 버튼을 각각 누릅니다.</div>
-            <div class="protocol-step"><b>Step 2.</b> Gems(ChatGPT/Claude)에 순서대로 붙여넣습니다.</div>
+            <div class="protocol-step"><b>Step 1.</b> 아래 통합 박스 우측 상단 <b>📄(복사)</b> 버튼을 누릅니다. (데이터+지시사항 통합됨)</div>
+            <div class="protocol-step"><b>Step 2.</b> Gems(ChatGPT/Claude)에 붙여넣습니다.</div>
             <div class="protocol-step"><b>Step 3.</b> AI가 제시한 <b>분석 결과</b>를 정독한 뒤 최종 의사결정을 내립니다.</div>
         </div>
     """, unsafe_allow_html=True)
@@ -314,22 +339,18 @@ if st.session_state.analyzed_data:
     c1, c2 = st.columns([3, 1])
     
     with c1:
-        # 동적으로 계산된 최신 수익률 반영
-        data_pack, system_prompt = engine.generate_gems_pack(df, t_name, m_ret, s_ret)
+        # 통합된 내용 생성
+        final_content = engine.generate_gems_pack(df, t_name, m_ret, s_ret, mdd, win_rate, total_trades)
         
-        st.caption("1️⃣ 데이터 팩 (Data Pack)")
-        st.code(data_pack, language="yaml")
-        
-        st.caption("2️⃣ 수석 전략가 지시사항 (System Prompt)")
-        st.code(system_prompt, language="yaml")
-        
-        st.caption("☝️ 각 박스 우측 상단의 복사 버튼을 눌러 Gems에 붙여넣으세요.")
+        st.caption("✅ 통합 데이터 팩 (One-Click Copy)")
+        st.code(final_content, language="yaml")
+        st.caption("☝️ 위 박스 우측 상단의 복사 버튼을 눌러 Gems에 붙여넣으세요.")
     
     with c2:
         if st.button("💾 구글 시트 저장"):
             log_data = {
                 "Ticker": t_name, "Price": last['Close'], "RSI": last['RSI'],
-                "Strategy_Ret": f"{s_ret*100:.2f}%", "VIX": last.get('VIX', 0)
+                "Strategy_Ret": f"{s_ret*100:.2f}%", "MDD": f"{mdd*100:.2f}%", "Win_Rate": f"{win_rate:.1f}%"
             }
             success, msg = engine.save_to_sheets(log_data)
             if success: st.success(msg)
