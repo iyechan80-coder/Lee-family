@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime
 import time
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # [초기 설정]
 st.set_page_config(page_title="Wonju AI Quant Lab v6.2", layout="wide", page_icon="💎")
@@ -23,9 +22,20 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# [라이브러리 로드 안전 장치]
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+    HAS_VADER = True
+except ImportError:
+    HAS_VADER = False
+
 class QuantLabEngine:
     def __init__(self):
-        self.analyzer = SentimentIntensityAnalyzer()
+        if HAS_VADER:
+            self.analyzer = SentimentIntensityAnalyzer()
+        else:
+            self.analyzer = None
+            st.warning("⚠️ 'vaderSentiment' 라이브러리가 설치되지 않았습니다. 감성 분석 기능이 비활성화됩니다. (설치: `pip install vaderSentiment`)")
 
     def _fetch_with_retry(self, ticker, period="3y", retries=3):
         """네트워크 불안정 대비 재시도 로직"""
@@ -68,7 +78,7 @@ class QuantLabEngine:
             news = ticker_obj.news
             
             sentiment_data = []
-            if news:
+            if news and _self.analyzer: # 분석기가 있을 때만 실행
                 for n in news:
                     title = n.get('title', '')
                     # publish time이 없는 경우 방지
@@ -88,10 +98,13 @@ class QuantLabEngine:
                 df['Sentiment'] = 0.0
                 
         except Exception as e:
-            st.error(f"News fetch error: {e}")
+            # st.error(f"News fetch error: {e}") # 사용자에게 불필요한 에러 노출 최소화
             df['Sentiment'] = 0.0
 
         # 결측치 처리 (주말 뉴스 등은 0으로, 매크로는 전날 값으로)
+        if 'Sentiment' not in df.columns:
+             df['Sentiment'] = 0.0
+             
         df['Sentiment'] = df['Sentiment'].fillna(0)
         df = df.ffill().bfill() # 매크로 데이터 채우기
         
@@ -171,6 +184,8 @@ with st.sidebar:
     period = st.selectbox("Analysis Period", ["6mo", "1y", "3y", "5y"], index=1)
     st.markdown("---")
     st.info("💡 **Tip:** 뉴스가 드문 종목은 감성 점수가 0으로 표시됩니다.")
+    if not HAS_VADER:
+        st.error("⚠️ 감성 분석 라이브러리(vaderSentiment) 미설치됨. 기능 제한.")
 
 if st.button("🚀 Run Analysis", type="primary"):
     engine = QuantLabEngine()
