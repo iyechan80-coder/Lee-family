@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.16", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.17", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -247,7 +247,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.16)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.17)")
 
 # 사이드바
 with st.sidebar:
@@ -306,7 +306,7 @@ if st.session_state.analyzed_data:
             <p>본 데이터 팩은 <b>원금 보호</b>를 최우선으로 분석하도록 설계되었습니다. 주변 동료들과 공유 시 아래 단계를 반드시 준수하십시오.</p>
             <div class="protocol-step"><b>Step 1.</b> 아래 두 개의 박스(데이터, 프롬프트) 우측 상단 <b>📄(복사)</b> 버튼을 각각 누릅니다.</div>
             <div class="protocol-step"><b>Step 2.</b> Gems(ChatGPT/Claude)에 순서대로 붙여넣습니다.</div>
-            <div class="protocol-step"><b>Step 3.</b> AI가 제시하는 <b>'매수 금지'</b> 사유를 먼저 정독한 뒤 최종 의사결정을 내립니다.</div>
+            <div class="protocol-step"><b>Step 3.</b> AI가 제시한 <b>분석 결과</b>를 정독한 뒤 최종 의사결정을 내립니다.</div>
         </div>
     """, unsafe_allow_html=True)
     
