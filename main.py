@@ -9,8 +9,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 
-# 1. 초기 설정 (버전 v5.8: AI 제거, 백테스팅 탑재, 시트 저장 개선 및 파일명 표준화)
-st.set_page_config(page_title="Wonju AI Quant Lab v5.8", layout="wide", page_icon="💎")
+# 1. 초기 설정 (버전 v5.9: 차트 필수 지표 복구 및 시각화 강화)
+st.set_page_config(page_title="Wonju AI Quant Lab v5.9", layout="wide", page_icon="💎")
 
 # 2. 데이터 캐싱 및 초기화
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -53,7 +53,7 @@ def display_fundamental_metrics(info):
     with col4: st.metric("배당수익률", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "N/A")
     st.divider()
 
-# 4. 구글 시트 저장 (최신 데이터가 상단에 오도록 index=2 삽입)
+# 4. 구글 시트 저장
 def save_to_google_sheet(url, data):
     """구글 시트의 헤더 바로 아래에 새로운 분석 데이터를 삽입함"""
     try:
@@ -137,7 +137,7 @@ def get_advanced_data(ticker, period):
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         df['RSI'] = 100 - (100 / (1 + gain/loss))
-        # 볼린저 밴드 (20일 기준)
+        # 볼린저 밴드 및 이평선 (20일 기준)
         df['MA20'] = df['Close'].rolling(window=20).mean()
         std = df['Close'].rolling(window=20).std()
         df['Upper'] = df['MA20'] + (std * 2)
@@ -187,25 +187,38 @@ if df is not None:
     st.divider()
     display_fundamental_metrics(info_data)
 
-    # 2. 통합 기술적 분석 차트
+    # 2. 통합 기술적 분석 차트 (필수 지표 복구: 3단 구성)
     st.subheader("📊 기술적 분석 차트 및 매매 타점")
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
     
-    # 캔들스틱 차트
+    # [수정] 차트 구성을 3단으로 확장 (가격/지표, 거래량, RSI)
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                        vertical_spacing=0.03, 
+                        row_heights=[0.5, 0.2, 0.3],
+                        subplot_titles=("주가 및 볼린저 밴드", "거래량", "RSI 강도"))
+    
+    # (1) 캔들스틱 및 이동평균선, 볼린저 밴드
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="주가"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], name="상단 밴드", line=dict(dash='dot', color='rgba(255,255,255,0.5)', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20일선(중심)", line=dict(color='yellow', width=1.5)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], name="하단 밴드", line=dict(dash='dot', color='rgba(255,255,255,0.5)', width=1)), row=1, col=1)
     
-    # 매매 시그널 마커 (삼각형 표시)
+    # (2) 매매 시그널 마커 (삼각형 표시)
     buys = df_res[df_res['Signal'] == 'Buy']
     sells = df_res[df_res['Signal'] == 'Sell']
-    fig.add_trace(go.Scatter(x=buys.index, y=buys['Low']*0.97, mode='markers', marker=dict(symbol='triangle-up', size=12, color='lime'), name="매수 시점"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=sells.index, y=sells['High']*1.03, mode='markers', marker=dict(symbol='triangle-down', size=12, color='red'), name="매도 시점"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=buys.index, y=buys['Low']*0.97, mode='markers', marker=dict(symbol='triangle-up', size=12, color='lime'), name="매수 타점"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=sells.index, y=sells['High']*1.03, mode='markers', marker=dict(symbol='triangle-down', size=12, color='red'), name="매도 타점"), row=1, col=1)
     
-    # RSI 지표 차트
-    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='orange')), row=2, col=1)
-    fig.add_hline(y=rsi_buy_level, line_dash="dot", line_color="green", row=2, col=1)
-    fig.add_hline(y=rsi_sell_level, line_dash="dot", line_color="red", row=2, col=1)
+    # (3) 거래량 차트 (상승/하락 색상 구분)
+    colors = ['red' if row['Open'] < row['Close'] else 'blue' for _, row in df.iterrows()]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="거래량", marker_color=colors), row=2, col=1)
+
+    # (4) RSI 지표 차트
+    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='orange')), row=3, col=1)
+    fig.add_hline(y=rsi_buy_level, line_dash="dot", line_color="green", annotation_text="과매도(매수)", row=3, col=1)
+    fig.add_hline(y=rsi_sell_level, line_dash="dot", line_color="red", annotation_text="과매수(매도)", row=3, col=1)
     
-    fig.update_layout(height=700, template="plotly_dark", xaxis_rangeslider_visible=False)
+    # 차트 레이아웃 최적화
+    fig.update_layout(height=900, template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
     # 3. Gems 연동 및 데이터 저장 섹션
@@ -217,8 +230,9 @@ if df is not None:
         with st.expander("데이터 복사하기", expanded=True):
             news_txt = get_robust_news(target_ticker)
             news_guide = "⚠️ 뉴스 수집 불가. 구글 검색으로 보완 필수." if "데이터 없음" in news_txt or "오류" in news_txt else ""
+            sector = info_data.get('sector', 'Unknown')
                 
-            pack = f"""[원주 퀀트 데이터팩: {target_ticker}]\n- 현재가: {current_price:,.0f}\n- RSI: {last['RSI']:.1f}\n- 백테스트 수익률: {total_ret:.2f}% (승률 {win_rate:.1f}%)\n- 뉴스:\n{news_txt}\n{news_guide}\n\n위 데이터를 바탕으로 구글 검색을 통해 심층 분석해줘. 손절가 필수."""
+            pack = f"""[원주 퀀트 데이터팩: {target_ticker}]\n- 현재가: {current_price:,.0f}\n- RSI: {last['RSI']:.1f}\n- 볼린저밴드 하단: {last['Lower']:,.0f}\n- 섹터: {sector}\n- 백테스트 수익률: {total_ret:.2f}% (승률 {win_rate:.1f}%)\n- 뉴스:\n{news_txt}\n{news_guide}\n\n위 데이터를 바탕으로 구글 검색을 통해 심층 분석해줘. 손절가 필수."""
             st.code(pack, language="markdown")
             
     with c2:
@@ -235,4 +249,4 @@ if df is not None:
             save_to_google_sheet(sheet_url, data_row)
 
     st.divider()
-    st.caption("💎 원주 퀀트 연구소 v5.8 - Lite & Pro (Standard: quant_lab.py)")
+    st.caption("💎 원주 퀀트 연구소 v5.9 - Chart Visualization Restored")
