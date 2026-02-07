@@ -9,7 +9,7 @@ import time
 import re
 import json
 
-# 구글 시트 연동 라이브러리 (기존 기능 유지)
+# 구글 시트 연동 라이브러리
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -18,9 +18,9 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.11", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.12", layout="wide", page_icon="💎")
 
-# [전역 스타일 설정 - 가시성 극대화 (White Theme)]
+# [전역 스타일 설정]
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; color: #212529; }
@@ -33,12 +33,12 @@ st.markdown("""
     }
     div[data-testid="stMetricLabel"] { color: #495057 !important; font-weight: 600; }
     div[data-testid="stMetricValue"] { color: #212529 !important; font-weight: 700; }
-    .gems-guide {
+    .gems-guide-main {
         background-color: #E3F2FD;
-        padding: 15px;
+        padding: 20px;
         border-radius: 10px;
         border-left: 5px solid #2196F3;
-        margin-bottom: 20px;
+        margin: 20px 0;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -66,9 +66,7 @@ class QuantLabEngine:
             self.analyzer_type = "Lite (Built-in)"
 
     def _clean_index(self, df):
-        """[오류 수정] DatetimeIndex 객체는 .dt 접근자 없이 직접 메서드 호출"""
         if df.empty: return df
-        # .dt 를 제거하고 직접 tz_convert/localize 호출
         df.index = pd.to_datetime(df.index, utc=True).tz_convert(None).normalize()
         df.index.name = 'Date'
         return df[~df.index.duplicated(keep='first')]
@@ -89,12 +87,10 @@ class QuantLabEngine:
 
     @st.cache_data(ttl=3600)
     def fetch_market_data(_self, ticker, period="3y"):
-        # 1. 메인 주가
         df = _self._fetch_with_retry(ticker, period)
         if df.empty: return None
         df = _self._clean_index(df)
 
-        # 2. 매크로 데이터 병합
         macro_map = {"^VIX": "VIX", "^TNX": "US_10Y", "KRW=X": "USD_KRW"}
         for m_ticker, col in macro_map.items():
             m_df = _self._fetch_with_retry(m_ticker, period)
@@ -104,7 +100,6 @@ class QuantLabEngine:
                     series = m_df[['Close']].rename(columns={'Close': col})
                     df = pd.merge(df, series, left_index=True, right_index=True, how='left')
 
-        # 3. 뉴스 감성 분석
         try:
             ticker_obj = yf.Ticker(ticker)
             news = ticker_obj.news
@@ -119,15 +114,10 @@ class QuantLabEngine:
                 sdf = pd.DataFrame(sent_data).groupby('Date')[['Sentiment']].mean()
                 sdf.index = pd.to_datetime(sdf.index).normalize()
                 df = pd.merge(df, sdf, left_index=True, right_index=True, how='left')
-        except: 
-            pass
+        except: pass
 
-        # Sentiment 컬럼 안전 처리
-        if 'Sentiment' not in df.columns:
-            df['Sentiment'] = 0.0
-        else:
-            df['Sentiment'] = df['Sentiment'].fillna(0.0)
-            
+        if 'Sentiment' not in df.columns: df['Sentiment'] = 0.0
+        else: df['Sentiment'] = df['Sentiment'].fillna(0.0)
         return df.ffill().bfill()
 
     def calculate_indicators(self, df):
@@ -148,13 +138,11 @@ class QuantLabEngine:
         df['Position'] = df['Signal'].replace(0, method='ffill').clip(lower=0)
         df['Market_Return'] = df['Close'].pct_change()
         df['Strategy_Return'] = df['Position'].shift(1) * df['Market_Return']
-        
         m_cum = (1 + df['Market_Return'].fillna(0)).cumprod().iloc[-1] - 1
         s_cum = (1 + df['Strategy_Return'].fillna(0)).cumprod().iloc[-1] - 1
         return m_cum, s_cum
 
     def save_to_sheets(self, data_dict):
-        """구글 시트 저장 (최신 기록 2행 삽입 로직 보존)"""
         if not HAS_GSPREAD: return False, "라이브러리가 없습니다."
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -168,44 +156,44 @@ class QuantLabEngine:
             return False, str(e)
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret):
-        """Gems 데이터 팩 (국문 구조 보존)"""
+        """[수정] 명칭을 영문으로 복구하여 LLM 처리 효율 극대화"""
         last = df.iloc[-1]
-        price_trend = "상승" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "하락"
-        rsi_trend = "상승" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "하락"
-        divergence = "발생 가능성 있음" if price_trend != rsi_trend else "없음"
+        price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
+        rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
+        divergence = "Potential Divergence" if price_trend != rsi_trend else "None"
 
         report = f"""
 ### 💎 원주 퀀트 연구소: Elite Analysis Data Pack ({ticker})
-**분석 시각:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
+**Analysis Time:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
-#### 1. 포지션 핵심 요약 (Technical Context)
-- **현재가:** ${last['Close']:.2f} | **RSI:** {last['RSI']:.2f}
-- **전략 수익률(3y):** {s_ret*100:.2f}% (시장 대비: {(s_ret-m_ret)*100:+.2f}%)
-- **볼린저 위치:** {'상단돌파' if last['Close']>last['BB_High'] else '하단돌파' if last['Close']<last['BB_Low'] else '정상범위'}
-- **추세 괴리(Divergence):** {divergence} (주가 {price_trend} / RSI {rsi_trend})
+#### 1. Technical Context (영문 명칭 유지)
+- **Current Price:** ${last['Close']:.2f}
+- **RSI (14):** {last['RSI']:.2f}
+- **Strategy Return (3y):** {s_ret*100:.2f}% (vs Market: {m_ret*100:.2f}%)
+- **BB Position:** {'Above Upper' if last['Close']>last['BB_High'] else 'Below Lower' if last['Close']<last['BB_Low'] else 'Inside'}
+- **Trend Divergence:** {divergence} (Price: {price_trend} / RSI: {rsi_trend})
 
-#### 2. 매크로 및 외부 심리 (Global & News)
-- **뉴스 감성(Sent):** {last['Sentiment']:.3f} (범위: -1.0 ~ 1.0)
-- **변동성(VIX):** {last.get('VIX', 0):.2f} | **10Y 금리:** {last.get('US_10Y', 0):.2f}%
-- **환율(USD/KRW):** {last.get('USD_KRW', 0):.2f}
+#### 2. Global Macro & News Sentiment
+- **Sentiment Score:** {last['Sentiment']:.3f} (Range: -1.0 to 1.0)
+- **VIX Index:** {last.get('VIX', 0):.2f}
+- **US 10Y Yield:** {last.get('US_10Y', 0):.2f}%
+- **USD/KRW Rate:** {last.get('USD_KRW', 0):.2f}
 
-#### 3. 원시 데이터 팩 (최근 5일)
+#### 3. Recent 5 Days Raw Data
 {df[['Close', 'RSI', 'Sentiment', 'VIX']].tail(5).to_string()}
 
 ---
-**Gems 분석 특화 프롬프트:**
-"당신은 월가 출신의 퀀트 분석가입니다. 위 데이터 팩을 바탕으로 RSI-주가 간의 괴리 여부를 정밀 판독하고, VIX 수치에 기반한 현재 시장의 공포 단계를 정의하세요. 최종적으로 다음 거래일의 매수/매도 시나리오를 확률 기반으로 제안하십시오."
+**Gems 분석 가이드:** "위 영문 데이터를 바탕으로 RSI와 주가의 괴리율을 분석하고, VIX 지수에 따른 리스크 프리미엄을 계산하여 내일의 매매 전략을 한글로 제안해줘."
 """
         return report
 
     def plot_dashboard(self, df, ticker, rsi_buy, rsi_sell):
-        """차트 시각화 (White Theme)"""
         fig = make_subplots(
             rows=4, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.06, 
             row_heights=[0.5, 0.15, 0.15, 0.2],
-            subplot_titles=(f"{ticker} 주가 및 볼린저 밴드", "거래량", f"RSI 지표 (매수 < {rsi_buy}, 매도 > {rsi_sell})", "감성 및 VIX 지수")
+            subplot_titles=(f"{ticker} 주가 및 볼린저 밴드", "거래량", f"RSI 지표 (Buy < {rsi_buy}, Sell > {rsi_sell})", "감성 및 VIX 지수")
         )
 
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Close", line=dict(color='black', width=1.5)), row=1, col=1)
@@ -228,20 +216,11 @@ class QuantLabEngine:
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.11)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.12)")
 
 # 사이드바
 with st.sidebar:
-    st.header("⚙️ 제어 및 가이드")
-    st.markdown("""
-    <div class="gems-guide">
-    <strong>💡 Gems 활용 가이드</strong><br>
-    1. 분석 실행 후 하단의 데이터 팩 복사<br>
-    2. Gems(ChatGPT/Claude)에 붙여넣기<br>
-    3. AI가 제안하는 시나리오 검토
-    </div>
-    """, unsafe_allow_html=True)
-    
+    st.header("⚙️ 제어 패널")
     ticker = st.text_input("티커 (예: NVDA)", "TSLA").upper()
     period = st.selectbox("분석 기간", ["1y", "3y", "5y"], index=1)
     
@@ -252,45 +231,68 @@ with st.sidebar:
 
 engine = QuantLabEngine()
 
-if st.button("🚀 전체 분석 및 동기화 실행", type="primary"):
+# [상태 유지 로직]
+if 'analyzed_data' not in st.session_state:
+    st.session_state.analyzed_data = None
+
+if st.button("🚀 전체 분석 실행", type="primary"):
     with st.spinner("퀀트 엔진 가동 중..."):
         df = engine.fetch_market_data(ticker, period)
         if df is not None and not df.empty:
             df = engine.calculate_indicators(df)
             m_ret, s_ret = engine.run_backtest(df, rsi_buy, rsi_sell)
             
-            # KPI
-            last = df.iloc[-1]
-            k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
-            k2.metric("RSI 전략 수익률", f"{s_ret*100:.1f}%", f"시장대비 {(s_ret-m_ret)*100:+.1f}%")
-            k3.metric("감성 점수", f"{last['Sentiment']:.2f}")
-            k4.metric("원/달러", f"₩{last.get('USD_KRW', 0):,.0f}")
-            k5.metric("공포(VIX)", f"{last.get('VIX', 0):.2f}")
-            
-            # 차트
-            engine.plot_dashboard(df, ticker, rsi_buy, rsi_sell)
-            
-            # Gems Pack
-            st.markdown("---")
-            st.subheader("📦 Gems 데이터 팩 & 클라우드")
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                pack_content = engine.generate_gems_pack(df, ticker, m_ret, s_ret)
-                st.text_area("LLM 전송용 컨텍스트 (Elite):", pack_content, height=280)
-            
-            with c2:
-                if st.button("💾 구글 시트 저장"):
-                    log_data = {
-                        "Ticker": ticker, "Price": last['Close'], "RSI": last['RSI'],
-                        "Strategy_Ret": f"{s_ret*100:.2f}%", "VIX": last.get('VIX', 0)
-                    }
-                    if HAS_GSPREAD and "gcp_service_account" in st.secrets:
-                        success, msg = engine.save_to_sheets(log_data)
-                        if success: st.success(msg)
-                        else: st.error(f"저장 실패: {msg}")
-                    else:
-                        st.warning("인증 정보(Secrets)를 확인하세요.")
-                st.info("시트 저장 시 최신 데이터가 상단(2행)에 기록됩니다.")
+            # 상태 저장
+            st.session_state.analyzed_data = {
+                'df': df, 'm_ret': m_ret, 's_ret': s_ret, 'ticker': ticker
+            }
         else:
             st.error("데이터 수집 실패. 티커를 확인해 주세요.")
+
+# [결과 렌더링 세션]
+if st.session_state.analyzed_data:
+    res = st.session_state.analyzed_data
+    df, m_ret, s_ret, t_name = res['df'], res['m_ret'], res['s_ret'], res['ticker']
+    last = df.iloc[-1]
+    
+    # KPI
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
+    k2.metric("전략 수익률", f"{s_ret*100:.1f}%", f"시장대비 {(s_ret-m_ret)*100:+.1f}%")
+    k3.metric("감성 점수", f"{last['Sentiment']:.2f}")
+    k4.metric("원/달러", f"₩{last.get('USD_KRW', 0):,.0f}")
+    k5.metric("공포(VIX)", f"{last.get('VIX', 0):.2f}")
+    
+    # 차트
+    engine.plot_dashboard(df, t_name, rsi_buy, rsi_sell)
+    
+    # Gems 지시사항 및 데이터 팩 (가시성 강화)
+    st.markdown("---")
+    st.markdown("""
+        <div class="gems-guide-main">
+            <h3>💡 Gems 활용 가이드 (주변 동료 전달용)</h3>
+            <p>1. 아래 <b>Gems 데이터 팩</b>의 텍스트를 모두 복사합니다.<br>
+            2. Gems(ChatGPT/Claude) 채팅창에 붙여넣습니다.<br>
+            3. AI가 제안하는 전문가 수준의 분석 시나리오를 확인하세요.</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.subheader("📦 Gems 데이터 팩 & 클라우드")
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        pack_content = engine.generate_gems_pack(df, t_name, m_ret, s_ret)
+        st.text_area("LLM 전송용 컨텍스트 (영문 명칭 유지):", pack_content, height=280)
+    
+    with c2:
+        if st.button("💾 구글 시트 저장"):
+            log_data = {
+                "Ticker": t_name, "Price": last['Close'], "RSI": last['RSI'],
+                "Strategy_Ret": f"{s_ret*100:.2f}%", "VIX": last.get('VIX', 0)
+            }
+            if HAS_GSPREAD and "gcp_service_account" in st.secrets:
+                success, msg = engine.save_to_sheets(log_data)
+                if success: st.success(msg)
+                else: st.error(f"저장 실패: {msg}")
+            else:
+                st.warning("인증 정보(Secrets)를 확인하세요.")
+        st.info("저장 버튼 클릭 시 최신 기록이 시트 상단(2행)에 삽입됩니다.")
