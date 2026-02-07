@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.15", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.16", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -247,7 +247,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.15)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.16)")
 
 # 사이드바
 with st.sidebar:
@@ -256,34 +256,42 @@ with st.sidebar:
     period = st.selectbox("분석 기간", ["1y", "3y", "5y"], index=1)
     
     st.markdown("---")
-    st.subheader("🛠️ 백테스트 설정")
-    rsi_buy = st.slider("RSI 매수 기준 (과매도)", 10, 40, 30)
-    rsi_sell = st.slider("RSI 매도 기준 (과매수)", 60, 90, 70)
+    st.subheader("🛠️ 백테스트 설정 (실시간)")
+    # 슬라이더 키 추가로 상태 관리
+    rsi_buy = st.slider("RSI 매수 기준 (과매도)", 10, 40, 30, key='rsi_buy_slider')
+    rsi_sell = st.slider("RSI 매도 기준 (과매수)", 60, 90, 70, key='rsi_sell_slider')
 
 engine = QuantLabEngine()
 
+# 세션 상태 초기화
 if 'analyzed_data' not in st.session_state:
     st.session_state.analyzed_data = None
 
+# 1. 데이터 수집 버튼 (비용이 큰 작업)
 if st.button("🚀 전체 분석 실행", type="primary"):
     with st.spinner("수석 전략가 엔진 가동 중..."):
         df = engine.fetch_market_data(ticker, period)
         if df is not None and not df.empty:
             df = engine.calculate_indicators(df)
-            m_ret, s_ret = engine.run_backtest(df, rsi_buy, rsi_sell)
-            st.session_state.analyzed_data = {'df': df, 'm_ret': m_ret, 's_ret': s_ret, 'ticker': ticker}
+            # 여기서는 데이터(df)와 티커만 저장 (수익률 계산은 아래에서 동적으로)
+            st.session_state.analyzed_data = {'df': df, 'ticker': ticker}
         else:
             st.error("데이터 수집 실패. 티커를 확인해 주세요.")
 
+# 2. 결과 렌더링 및 동적 백테스트 (저비용 작업)
 if st.session_state.analyzed_data:
     res = st.session_state.analyzed_data
-    df, m_ret, s_ret, t_name = res['df'], res['m_ret'], res['s_ret'], res['ticker']
+    df, t_name = res['df'], res['ticker']
+    
+    # [핵심] 슬라이더 변경 시마다 즉시 재계산 (Dynamic Calculation)
+    m_ret, s_ret = engine.run_backtest(df, rsi_buy, rsi_sell)
     last = df.iloc[-1]
     
     # KPI
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
-    k2.metric("RSI 전략 수익률", f"{s_ret*100:.1f}%", f"시장대비 {(s_ret-m_ret)*100:+.1f}%")
+    # [복구] 존버 수익률 명확히 표시
+    k2.metric("RSI 전략 수익률", f"{s_ret*100:.1f}%", f"존버(Buy&Hold) {m_ret*100:.1f}%")
     k3.metric("뉴스 감성", f"{last['Sentiment']:.2f}")
     k4.metric("원/달러", f"₩{last.get('USD_KRW', 0):,.0f}")
     k5.metric("공포(VIX)", f"{last.get('VIX', 0):.2f}")
@@ -306,7 +314,7 @@ if st.session_state.analyzed_data:
     c1, c2 = st.columns([3, 1])
     
     with c1:
-        # 데이터 팩과 프롬프트 분리 호출
+        # 동적으로 계산된 최신 수익률 반영
         data_pack, system_prompt = engine.generate_gems_pack(df, t_name, m_ret, s_ret)
         
         st.caption("1️⃣ 데이터 팩 (Data Pack)")
