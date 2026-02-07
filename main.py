@@ -9,7 +9,7 @@ import time
 import re
 import json
 
-# 구글 시트 연동 라이브러리 (v6.1 복구 유지)
+# 구글 시트 연동 라이브러리 (기존 기능 유지)
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.10", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.11", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정 - 가시성 극대화 (White Theme)]
 st.markdown("""
@@ -66,9 +66,10 @@ class QuantLabEngine:
             self.analyzer_type = "Lite (Built-in)"
 
     def _clean_index(self, df):
-        """인덱스 타임존 제거 및 표준화 (MergeError 방지)"""
+        """[오류 수정] DatetimeIndex 객체는 .dt 접근자 없이 직접 메서드 호출"""
         if df.empty: return df
-        df.index = pd.to_datetime(df.index, utc=True).dt.tz_localize(None).normalize()
+        # .dt 를 제거하고 직접 tz_convert/localize 호출
+        df.index = pd.to_datetime(df.index, utc=True).tz_convert(None).normalize()
         df.index.name = 'Date'
         return df[~df.index.duplicated(keep='first')]
 
@@ -93,7 +94,7 @@ class QuantLabEngine:
         if df.empty: return None
         df = _self._clean_index(df)
 
-        # 2. 매크로 데이터 병합 (환율, 금리, VIX)
+        # 2. 매크로 데이터 병합
         macro_map = {"^VIX": "VIX", "^TNX": "US_10Y", "KRW=X": "USD_KRW"}
         for m_ticker, col in macro_map.items():
             m_df = _self._fetch_with_retry(m_ticker, period)
@@ -121,7 +122,7 @@ class QuantLabEngine:
         except: 
             pass
 
-        # [오류 수정 포인트] AttributeError 방지 로직
+        # Sentiment 컬럼 안전 처리
         if 'Sentiment' not in df.columns:
             df['Sentiment'] = 0.0
         else:
@@ -153,7 +154,7 @@ class QuantLabEngine:
         return m_cum, s_cum
 
     def save_to_sheets(self, data_dict):
-        """구글 시트 저장 로직 (2행 삽입 로직 유지)"""
+        """구글 시트 저장 (최신 기록 2행 삽입 로직 보존)"""
         if not HAS_GSPREAD: return False, "라이브러리가 없습니다."
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -167,7 +168,7 @@ class QuantLabEngine:
             return False, str(e)
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret):
-        """[Elite] 고품질 Gems 데이터 팩 생성 (국문 구조)"""
+        """Gems 데이터 팩 (국문 구조 보존)"""
         last = df.iloc[-1]
         price_trend = "상승" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "하락"
         rsi_trend = "상승" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "하락"
@@ -198,7 +199,7 @@ class QuantLabEngine:
         return report
 
     def plot_dashboard(self, df, ticker, rsi_buy, rsi_sell):
-        """가시성 개선 차트 (White Theme 유지)"""
+        """차트 시각화 (White Theme)"""
         fig = make_subplots(
             rows=4, cols=1, 
             shared_xaxes=True, 
@@ -207,22 +208,18 @@ class QuantLabEngine:
             subplot_titles=(f"{ticker} 주가 및 볼린저 밴드", "거래량", f"RSI 지표 (매수 < {rsi_buy}, 매도 > {rsi_sell})", "감성 및 VIX 지수")
         )
 
-        # 1. Price
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Close", line=dict(color='black', width=1.5)), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['BB_High'], name="BB High", line=dict(dash='dot', color='gray')), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['BB_Low'], name="BB Low", line=dict(dash='dot', color='gray'), fill='tonexty', fillcolor='rgba(200,200,200,0.1)'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA 20", line=dict(color='orange', width=1.2)), row=1, col=1)
 
-        # 2. Volume
         colors = ['red' if r['Open'] > r['Close'] else 'green' for i, r in df.iterrows()]
         fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color=colors), row=2, col=1)
         
-        # 3. RSI
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='purple', width=1.5)), row=3, col=1)
         fig.add_hline(y=rsi_sell, line_dash="dash", line_color="red", row=3, col=1)
         fig.add_hline(y=rsi_buy, line_dash="dash", line_color="green", row=3, col=1)
 
-        # 4. Sentiment & VIX
         fig.add_trace(go.Bar(x=df.index, y=df['Sentiment'], name="Sentiment", marker_color='blue', opacity=0.4), row=4, col=1)
         if 'VIX' in df.columns:
             fig.add_trace(go.Scatter(x=df.index, y=df['VIX'], name="VIX", line=dict(color='red', width=1), yaxis='y2'), row=4, col=1)
@@ -231,7 +228,7 @@ class QuantLabEngine:
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.10)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.11)")
 
 # 사이드바
 with st.sidebar:
@@ -274,7 +271,7 @@ if st.button("🚀 전체 분석 및 동기화 실행", type="primary"):
             # 차트
             engine.plot_dashboard(df, ticker, rsi_buy, rsi_sell)
             
-            # Gems Pack & Cloud Sync
+            # Gems Pack
             st.markdown("---")
             st.subheader("📦 Gems 데이터 팩 & 클라우드")
             c1, c2 = st.columns([3, 1])
