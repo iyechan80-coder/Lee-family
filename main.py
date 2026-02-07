@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.22", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.23", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -47,7 +47,6 @@ st.markdown("""
         margin-top: 8px;
         border: 1px dashed #FC8181;
     }
-    /* 코드 블록 스타일: 가시성 및 복사 버튼 강조 */
     .stCodeBlock {
         border: 2px solid #3182CE !important;
         border-radius: 8px !important;
@@ -75,9 +74,9 @@ class LiteSentimentAnalyzer:
         words = re.findall(r'\w+', text)
         p_count = sum(1 for w in words if w in self.pos_words)
         n_count = sum(1 for w in words if w in self.neg_words)
-        
         score = p_count - n_count
-        norm_score = score / (p_count + n_count + 1) # 정규화
+        # 안정적인 정규화
+        norm_score = score / (p_count + n_count + 1)
         return {'compound': norm_score}
 
 class QuantLabEngine:
@@ -156,10 +155,13 @@ class QuantLabEngine:
         return df.fillna(50)
 
     def run_backtest(self, df, rsi_buy, rsi_sell):
+        """실시간 동적 백테스팅 엔진"""
         df = df.copy()
         df['Signal'] = 0
         df.loc[df['RSI'] < rsi_buy, 'Signal'] = 1
         df.loc[df['RSI'] > rsi_sell, 'Signal'] = -1
+        
+        # 포지션 유지 (Long-Only)
         df['Position'] = df['Signal'].replace(0, method='ffill').clip(lower=0)
         
         df['Market_Return'] = df['Close'].pct_change().fillna(0)
@@ -178,12 +180,22 @@ class QuantLabEngine:
         # 승률 계산
         df['Trade'] = df['Position'].diff()
         entries, exits = df[df['Trade'] == 1].index, df[df['Trade'] == -1].index
-        wins = sum(1 for i in range(min(len(entries), len(exits))) if df.loc[exits[i]]['Close'] > df.loc[entries[i]]['Close'])
-        win_rate = (wins / len(entries)) * 100 if len(entries) > 0 else 0.0
-        return m_cum, s_cum, mdd, win_rate, len(entries)
+        
+        # 진입/청산 짝 맞추기
+        wins = 0
+        total_trades = min(len(entries), len(exits))
+        if total_trades > 0:
+            for i in range(total_trades):
+                if df.loc[exits[i]]['Close'] > df.loc[entries[i]]['Close']:
+                    wins += 1
+            win_rate = (wins / total_trades) * 100
+        else:
+            win_rate = 0.0
+
+        return m_cum, s_cum, mdd, win_rate, total_trades
 
     def save_to_sheets(self, data_dict):
-        if not HAS_GSPREAD: return False, "라이브러리(gspread) 미설치 상태입니다."
+        if not HAS_GSPREAD: return False, "라이브러리가 설치되지 않았습니다."
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             if "gcp_service_account" not in st.secrets: return False, "Secrets 인증 정보가 없습니다."
@@ -195,7 +207,7 @@ class QuantLabEngine:
         except Exception as e: return False, f"연동 에러: {str(e)}"
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades):
-        """[Final Split] 데이터 팩과 지시사항 분리 생성 (티커 연동)"""
+        """[Final Split] 데이터 팩과 수석 전략가 프롬프트 분리 생성"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
@@ -210,9 +222,9 @@ Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 - Ticker: {ticker}
 - Price: ${last['Close']:.2f}
 - RSI(14): {last['RSI']:.2f}
-- Strategy Return: {s_ret*100:.2f}% (Market: {m_ret*100:.2f}%)
-- Max Drawdown (MDD): {mdd*100:.2f}% (Risk Check)
-- Win Rate: {win_rate:.1f}% ({trades} Trades)
+- Strategy Return: {s_ret*100:.2f}% (Market Bench: {m_ret*100:.2f}%)
+- Max Drawdown (MDD): {mdd*100:.2f}% (Risk Sensitivity Check)
+- Win Rate: {win_rate:.1f}% ({trades} Trades Executed)
 - Bollinger Position: {'Over Upper' if last['Close']>last['BB_High'] else 'Under Lower' if last['Close']<last['BB_Low'] else 'Neutral'}
 - Trend Divergence: {divergence}
 
@@ -226,22 +238,45 @@ Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 {df[['Close', 'RSI', 'Sentiment', 'VIX']].tail(5).to_string()}
 """
 
-        # 2. 수석 전략가 지시사항 (Instruction Only) - 티커 동적 연동
+        # 2. 수석 전략가 지시사항 (Instruction Only)
         system_prompt = f"""
-[SYSTEM PROTOCOL: Wonju Quant Strategist - Chief Level]
-당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가입니다. 당신의 최우선 가치는 '원금 보호'입니다.
-위 데이터를 기반으로 아래 4단계 분석 프로세스를 엄격히 수행하십시오.
+[Identity & Role]
+당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 최우선 가치는 **'사용자의 원금 보호'**입니다. 감정적인 희망 회로를 철저히 배제하고, 데이터가 부정적일 경우 어설픈 대안 대신 단호한 **[매수 금지]**를 선언하십시오.
 
-Phase 1. 능동적 팩트 체크 (뉴스 데이터 부족 시 즉시 '{ticker}' 관련 최신 뉴스 구글 검색 필수 수행)
-Phase 2. 데이터 그라운딩 (RSI/BB/MDD와 최신 리서치 간의 괴리 분석)
-Phase 3. 리스크 검증 (이 종목을 지금 사면 망하는 이유 2가지를 가장 냉정하게 제시)
-Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
-  - [BUY] 조건: 정배열 유지 + 명확한 모멘텀 + RSI 70 미만 + MDD 안정권
-  - [PASS/PROHIBITED] 조건: 위 조건 미달 시 즉시 '매수 금지' 선언 및 진입가 삭제
+[Operational Protocol: 4단계 분석 프로세스]
+Phase 1. 능동적 팩트 체크 (Google Search 필수)
+- 제공된 데이터 팩의 뉴스 섹션이 부실하거나 Sentiment Score가 0일 경우, 반드시 '{ticker}' 티커를 기반으로 구글 검색을 수행하십시오.
+- 최신 공시, 실적 발표 결과, CEO 행보, 해당 섹터의 매크로 환경(금리, 환율)을 직접 리서치하여 분석에 반영하십시오. "뉴스가 없어서 분석 불가"라는 답변은 허용되지 않습니다.
 
-판단: [강력 매수 / 관망 / 매수 금지] 중 택 1
-가족을 위한 한 줄 브리핑 필수. (예: "상한 사과입니다. 접근 금지.")
-###DATA_START### [판단] 핵심 근거 요약 ###DATA_END###
+Phase 2. 데이터 그라운딩 (Data Grounding)
+- 기술적 지표(RSI/BB/MDD)와 리서치한 뉴스 간의 괴리를 분석하십시오. 특히 MDD {mdd*100:.1f}%와 승률 {win_rate:.1f}%를 기반으로 전략의 안정성을 재검증하십시오.
+- {ticker}의 예상 PER, PBR을 동종 업계 평균과 비교하여 현재 가격의 위치를 정의하십시오.
+
+Phase 3. 리스크 검증 (Devil's Advocate)
+- [필수] "이 종목을 지금 사면 망하는 이유 2가지"를 가장 냉정하게 제시하십시오.
+
+Phase 4. 트레이딩 셋업 (Binary Decision)
+- [BUY/PASS]: 아래 조건을 모두 충족할 때만 매수 전략을 출력하십시오.
+  1. 주가가 200일 이평선 위에 있음 (정배열)
+  2. 명확한 상승 모멘텀(뉴스/재료)이 검색됨
+  3. RSI가 과매수(70 이상)가 아님
+  4. MDD가 안정권(-20% 이내 권장)임
+- [AVOID/PROHIBITED]: 위 조건 중 하나라도 미달하거나, 추세가 붕괴된 경우 진입가와 목표가를 절대 제시하지 마십시오. 대신 **"현재 진입 근거 없음"**을 단호하게 선언하십시오.
+
+[Output Format]
+📊 심층 분석 요약 (매크로/펀더멘털/기술적 진단)
+🛡️ 리스크 점검 (매수 금지 사유 또는 주의사항 최상단 배치)
+🎯 트레이딩 전략 (Action Plan)
+- 판단: [강력 매수 / 관망 / 매수 금지] 중 택 1
+- 전략: '매수 금지'일 경우 진입가/목표가 칸을 삭제하고 **"원금 손실 위험 매우 높음, 접근 금지"**라고 명시하십시오. '눌림목 매수' 같은 유혹적인 표현을 금지합니다.
+- ⛔ 손절가 (Stop-loss): 매수 전략일 경우에만 필수 작성.
+
+👨‍👩‍👧‍👦 가족을 위한 한 줄 브리핑
+예: "상한 사과입니다. 겉이 번지르르해도 절대 한 입 베어 물지 마세요."
+
+[System Rules]
+- 단호함: 모호한 추측 대신 데이터에 기반한 결론만 내리십시오.
+- 데이터 태그: 답변 최하단에 ###DATA_START### [판단] 핵심 근거 한 줄 요약 ###DATA_END###를 포함하십시오.
 """
         return data_pack, system_prompt
 
@@ -263,7 +298,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.22)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.23)")
 
 with st.sidebar:
     st.header("⚙️ 제어 패널")
@@ -277,6 +312,7 @@ with st.sidebar:
 engine = QuantLabEngine()
 if 'analyzed_data' not in st.session_state: st.session_state.analyzed_data = None
 
+# 1. 데이터 수집 버튼
 if st.button("🚀 전체 분석 실행", type="primary"):
     with st.spinner("수석 전략가 엔진 가동 중..."):
         df = engine.fetch_market_data(ticker, period)
@@ -285,12 +321,16 @@ if st.button("🚀 전체 분석 실행", type="primary"):
             st.session_state.analyzed_data = {'df': df, 'ticker': ticker}
         else: st.error("데이터 수집 실패. 티커를 확인해 주세요.")
 
+# 2. 결과 렌더링 및 동적 백테스트
 if st.session_state.analyzed_data:
     res = st.session_state.analyzed_data
     df, t_name = res['df'], res['ticker']
+    
+    # 동적 재계산
     m_ret, s_ret, mdd, win_rate, total_trades = engine.run_backtest(df, rsi_buy, rsi_sell)
     last = df.iloc[-1]
     
+    # KPI
     st.markdown("### 📊 Key Performance Indicators")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
