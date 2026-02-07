@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.19", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.20", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -196,14 +196,14 @@ class QuantLabEngine:
             return False, f"연동 에러: {str(e)}"
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades):
-        """[Consolidated] 데이터 팩과 지시사항을 하나의 문자열로 통합 생성"""
+        """[Split] 데이터 팩과 프롬프트를 분리하여 반환"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
         divergence = "Potential Divergence" if price_trend != rsi_trend else "None"
 
-        # 하나의 긴 문자열로 통합 (One-Click Copy 지원)
-        final_content = f"""
+        # 1. 데이터 파트 (Data Only)
+        data_pack = f"""
 [Wonju Quant Lab Analysis Data Pack: {ticker}]
 Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
@@ -225,8 +225,10 @@ Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
 #### SECTION C. RECENT TREND (Last 5 Days)
 {df[['Close', 'RSI', 'Sentiment', 'VIX']].tail(5).to_string()}
+"""
 
---------------------------------------------------
+        # 2. 프롬프트 파트 (Instruction Only)
+        system_prompt = f"""
 [SYSTEM PROTOCOL: Wonju Quant Strategist]
 당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가입니다. 당신의 최우선 가치는 '원금 보호'입니다.
 위 영문 데이터를 기반으로 아래 4단계 분석 프로세스를 엄격히 수행하십시오.
@@ -242,7 +244,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
 가족을 위한 한 줄 브리핑 필수. (예: "상한 사과입니다. 접근 금지.")
 ###DATA_START### [판단] 핵심 근거 요약 ###DATA_END###
 """
-        return final_content
+        return data_pack, system_prompt
 
     def plot_dashboard(self, df, ticker, rsi_buy, rsi_sell):
         fig = make_subplots(
@@ -273,7 +275,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision: BUY/PASS)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.19)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.20)")
 
 with st.sidebar:
     st.header("⚙️ 제어 패널")
@@ -329,8 +331,8 @@ if st.session_state.analyzed_data:
         <div class="gems-guide-main">
             <h2 style='color: #E53E3E;'>🛡️ 수석 트레이딩 전략가 분석 프로토콜</h2>
             <p>본 데이터 팩은 <b>원금 보호</b>를 최우선으로 분석하도록 설계되었습니다. 주변 동료들과 공유 시 아래 단계를 반드시 준수하십시오.</p>
-            <div class="protocol-step"><b>Step 1.</b> 아래 통합 박스 우측 상단 <b>📄(복사)</b> 버튼을 누릅니다. (데이터+지시사항 통합됨)</div>
-            <div class="protocol-step"><b>Step 2.</b> Gems(ChatGPT/Claude)에 붙여넣습니다.</div>
+            <div class="protocol-step"><b>Step 1.</b> 아래 두 개의 박스(데이터, 프롬프트) 우측 상단 <b>📄(복사)</b> 버튼을 각각 누릅니다.</div>
+            <div class="protocol-step"><b>Step 2.</b> Gems(ChatGPT/Claude)에 순서대로 붙여넣습니다.</div>
             <div class="protocol-step"><b>Step 3.</b> AI가 제시한 <b>분석 결과</b>를 정독한 뒤 최종 의사결정을 내립니다.</div>
         </div>
     """, unsafe_allow_html=True)
@@ -339,12 +341,16 @@ if st.session_state.analyzed_data:
     c1, c2 = st.columns([3, 1])
     
     with c1:
-        # 통합된 내용 생성
-        final_content = engine.generate_gems_pack(df, t_name, m_ret, s_ret, mdd, win_rate, total_trades)
+        # 데이터 팩과 프롬프트 분리 생성 및 출력
+        data_pack, system_prompt = engine.generate_gems_pack(df, t_name, m_ret, s_ret, mdd, win_rate, total_trades)
         
-        st.caption("✅ 통합 데이터 팩 (One-Click Copy)")
-        st.code(final_content, language="yaml")
-        st.caption("☝️ 위 박스 우측 상단의 복사 버튼을 눌러 Gems에 붙여넣으세요.")
+        st.caption("1️⃣ 데이터 팩 (Data Pack)")
+        st.code(data_pack, language="yaml")
+        
+        st.caption("2️⃣ 수석 전략가 지시사항 (System Prompt)")
+        st.code(system_prompt, language="yaml")
+        
+        st.caption("☝️ 각 박스 우측 상단의 복사 버튼을 눌러 Gems에 붙여넣으세요.")
     
     with c2:
         if st.button("💾 구글 시트 저장"):
