@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.23", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.27", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -47,6 +47,7 @@ st.markdown("""
         margin-top: 8px;
         border: 1px dashed #FC8181;
     }
+    /* 코드 블록 스타일 (Copy 버튼 가시성 확보) */
     .stCodeBlock {
         border: 2px solid #3182CE !important;
         border-radius: 8px !important;
@@ -54,7 +55,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# [고도화된 내장형 금융 감성 분석기]
+# [내장형 금융 감성 분석기]
 class LiteSentimentAnalyzer:
     def __init__(self):
         self.pos_words = {
@@ -74,8 +75,8 @@ class LiteSentimentAnalyzer:
         words = re.findall(r'\w+', text)
         p_count = sum(1 for w in words if w in self.pos_words)
         n_count = sum(1 for w in words if w in self.neg_words)
+        # 안정적 정규화
         score = p_count - n_count
-        # 안정적인 정규화
         norm_score = score / (p_count + n_count + 1)
         return {'compound': norm_score}
 
@@ -91,6 +92,7 @@ class QuantLabEngine:
 
     def _clean_index(self, df):
         if df.empty: return df
+        # 타임존 제거 및 정규화 (데이터 병합 충돌 방지 핵심)
         df.index = pd.to_datetime(df.index, utc=True).tz_convert(None).normalize()
         df.index.name = 'Date'
         return df[~df.index.duplicated(keep='first')]
@@ -122,6 +124,7 @@ class QuantLabEngine:
                 m_df = _self._clean_index(m_df)
                 if 'Close' in m_df.columns:
                     series = m_df[['Close']].rename(columns={'Close': col})
+                    # 인덱스 기준 안전 병합
                     df = pd.merge(df, series, left_index=True, right_index=True, how='left')
 
         try:
@@ -155,14 +158,14 @@ class QuantLabEngine:
         return df.fillna(50)
 
     def run_backtest(self, df, rsi_buy, rsi_sell):
-        """실시간 동적 백테스팅 엔진"""
+        """[보완] Pandas 최신 문법 준수 및 안정성 강화"""
         df = df.copy()
         df['Signal'] = 0
         df.loc[df['RSI'] < rsi_buy, 'Signal'] = 1
         df.loc[df['RSI'] > rsi_sell, 'Signal'] = -1
         
-        # 포지션 유지 (Long-Only)
-        df['Position'] = df['Signal'].replace(0, method='ffill').clip(lower=0)
+        # [수정] deprecated된 replace(method='ffill') 대신 표준 문법 사용
+        df['Position'] = df['Signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0)
         
         df['Market_Return'] = df['Close'].pct_change().fillna(0)
         df['Strategy_Return'] = df['Position'].shift(1) * df['Market_Return']
@@ -171,7 +174,6 @@ class QuantLabEngine:
         m_cum = (1 + df['Market_Return']).cumprod().iloc[-1] - 1
         s_cum = (1 + df['Strategy_Return']).cumprod().iloc[-1] - 1
 
-        # MDD 계산
         cum_equity = (1 + df['Strategy_Return']).cumprod()
         running_max = cum_equity.cummax()
         drawdown = (cum_equity - running_max) / running_max
@@ -179,23 +181,25 @@ class QuantLabEngine:
 
         # 승률 계산
         df['Trade'] = df['Position'].diff()
-        entries, exits = df[df['Trade'] == 1].index, df[df['Trade'] == -1].index
+        entries = df[df['Trade'] == 1].index
+        exits = df[df['Trade'] == -1].index
         
-        # 진입/청산 짝 맞추기
         wins = 0
-        total_trades = min(len(entries), len(exits))
-        if total_trades > 0:
-            for i in range(total_trades):
+        # 진입/청산 쌍이 맞지 않을 경우(보유 중) 처리
+        trade_count = min(len(entries), len(exits))
+        
+        if trade_count > 0:
+            for i in range(trade_count):
                 if df.loc[exits[i]]['Close'] > df.loc[entries[i]]['Close']:
                     wins += 1
-            win_rate = (wins / total_trades) * 100
+            win_rate = (wins / trade_count) * 100
         else:
             win_rate = 0.0
 
-        return m_cum, s_cum, mdd, win_rate, total_trades
+        return m_cum, s_cum, mdd, win_rate, trade_count
 
     def save_to_sheets(self, data_dict):
-        if not HAS_GSPREAD: return False, "라이브러리가 설치되지 않았습니다."
+        if not HAS_GSPREAD: return False, "라이브러리(gspread) 미설치 상태입니다."
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             if "gcp_service_account" not in st.secrets: return False, "Secrets 인증 정보가 없습니다."
@@ -207,7 +211,7 @@ class QuantLabEngine:
         except Exception as e: return False, f"연동 에러: {str(e)}"
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades):
-        """[Final Split] 데이터 팩과 수석 전략가 프롬프트 분리 생성"""
+        """데이터 팩 및 전략가 지시사항 생성 (박스 분리)"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
@@ -298,7 +302,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.23)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.27)")
 
 with st.sidebar:
     st.header("⚙️ 제어 패널")
