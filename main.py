@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.27", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.29", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -75,7 +75,6 @@ class LiteSentimentAnalyzer:
         words = re.findall(r'\w+', text)
         p_count = sum(1 for w in words if w in self.pos_words)
         n_count = sum(1 for w in words if w in self.neg_words)
-        # 안정적 정규화
         score = p_count - n_count
         norm_score = score / (p_count + n_count + 1)
         return {'compound': norm_score}
@@ -158,13 +157,13 @@ class QuantLabEngine:
         return df.fillna(50)
 
     def run_backtest(self, df, rsi_buy, rsi_sell):
-        """[보완] Pandas 최신 문법 준수 및 안정성 강화"""
+        """[v6.29 수정] Pandas Future Warning 해결 및 안정성 강화"""
         df = df.copy()
         df['Signal'] = 0
         df.loc[df['RSI'] < rsi_buy, 'Signal'] = 1
         df.loc[df['RSI'] > rsi_sell, 'Signal'] = -1
         
-        # [수정] deprecated된 replace(method='ffill') 대신 표준 문법 사용
+        # [수정됨] replace(method='ffill')는 deprecated 됨 -> 표준 문법 사용
         df['Position'] = df['Signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0)
         
         df['Market_Return'] = df['Close'].pct_change().fillna(0)
@@ -185,7 +184,6 @@ class QuantLabEngine:
         exits = df[df['Trade'] == -1].index
         
         wins = 0
-        # 진입/청산 쌍이 맞지 않을 경우(보유 중) 처리
         trade_count = min(len(entries), len(exits))
         
         if trade_count > 0:
@@ -210,8 +208,8 @@ class QuantLabEngine:
             return True, "클라우드(2행)에 성공적으로 기록되었습니다."
         except Exception as e: return False, f"연동 에러: {str(e)}"
 
-    def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades):
-        """데이터 팩 및 전략가 지시사항 생성 (박스 분리)"""
+    def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades, horizon):
+        """[v6.29] 기간 정보와 리스크 지표가 완비된 데이터 팩 생성"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
@@ -220,6 +218,7 @@ class QuantLabEngine:
         # 1. 데이터 팩 (Data Only)
         data_pack = f"""
 [Wonju Quant Lab Analysis Data Pack: {ticker}]
+Investment Horizon: {horizon}
 Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
 #### SECTION A. PERFORMANCE METRICS (3y Backtest)
@@ -242,38 +241,45 @@ Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 {df[['Close', 'RSI', 'Sentiment', 'VIX']].tail(5).to_string()}
 """
 
-        # 2. 수석 전략가 지시사항 (Instruction Only)
+        # 2. 투자 기간별 동적 가중치 설정
+        if "단기" in horizon:
+            horizon_guide = "실시간 변동성, RSI 과매도/과매수, 뉴스 감성 및 수급 모멘텀"
+        elif "중기" in horizon:
+            horizon_guide = "이평선 추세 정배열 여부, 볼린저 밴드 이탈 방향, 분기 실적 전망"
+        else:
+            horizon_guide = "10년물 금리 및 환율 매크로 환경, 산업 내 독점력, 장기 밸류에이션(P/E, P/B)"
+
+        # 수석 전략가 지시사항 (Instruction Only)
         system_prompt = f"""
 [Identity & Role]
-당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 최우선 가치는 **'사용자의 원금 보호'**입니다. 감정적인 희망 회로를 철저히 배제하고, 데이터가 부정적일 경우 어설픈 대안 대신 단호한 **[매수 금지]**를 선언하십시오.
+당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 목표는 사용자가 선택한 투자 기간인 **'{horizon}'**에 최적화된 결론을 내리는 것입니다. 최우선 가치는 **'사용자의 원금 보호'**입니다.
 
 [Operational Protocol: 4단계 분석 프로세스]
 Phase 1. 능동적 팩트 체크 (Google Search 필수)
-- 제공된 데이터 팩의 뉴스 섹션이 부실하거나 Sentiment Score가 0일 경우, 반드시 '{ticker}' 티커를 기반으로 구글 검색을 수행하십시오.
-- 최신 공시, 실적 발표 결과, CEO 행보, 해당 섹터의 매크로 환경(금리, 환율)을 직접 리서치하여 분석에 반영하십시오. "뉴스가 없어서 분석 불가"라는 답변은 허용되지 않습니다.
+- 제공된 데이터 팩의 뉴스 섹션이 부실할 경우, 반드시 '{ticker}' 티커를 기반으로 구글 검색을 수행하십시오.
+- **{horizon} 분석 가중치:** {horizon_guide}에 가장 높은 비중을 두고 리서치하십시오.
 
 Phase 2. 데이터 그라운딩 (Data Grounding)
-- 기술적 지표(RSI/BB/MDD)와 리서치한 뉴스 간의 괴리를 분석하십시오. 특히 MDD {mdd*100:.1f}%와 승률 {win_rate:.1f}%를 기반으로 전략의 안정성을 재검증하십시오.
-- {ticker}의 예상 PER, PBR을 동종 업계 평균과 비교하여 현재 가격의 위치를 정의하십시오.
+- 기술적 지표(RSI/BB/MDD)와 리서치한 뉴스 간의 괴리를 분석하십시오. 특히 MDD {mdd*100:.1f}%가 '{horizon}' 기간 동안 투자자가 견딜 수 있는 수준인지 평가하십시오.
 
 Phase 3. 리스크 검증 (Devil's Advocate)
 - [필수] "이 종목을 지금 사면 망하는 이유 2가지"를 가장 냉정하게 제시하십시오.
 
 Phase 4. 트레이딩 셋업 (Binary Decision)
-- [BUY/PASS]: 아래 조건을 모두 충족할 때만 매수 전략을 출력하십시오.
-  1. 주가가 200일 이평선 위에 있음 (정배열)
-  2. 명확한 상승 모멘텀(뉴스/재료)이 검색됨
-  3. RSI가 과매수(70 이상)가 아님
-  4. MDD가 안정권(-20% 이내 권장)임
-- [AVOID/PROHIBITED]: 위 조건 중 하나라도 미달하거나, 추세가 붕괴된 경우 진입가와 목표가를 절대 제시하지 마십시오. 대신 **"현재 진입 근거 없음"**을 단호하게 선언하십시오.
+- [BUY/PASS]: 아래 4개 조건을 모두 충족할 때만 매수 전략을 출력하십시오.
+  1. 주가 추세가 {horizon} 관점에서 매수 우위임.
+  2. 명확한 상승 모멘텀(뉴스/재료)이 검색됨.
+  3. RSI가 과매수 상태가 아님.
+  4. MDD가 리스크 관리 범위(-20% 이내 권장)에 있음.
+- [AVOID/PROHIBITED]: 위 조건 중 하나라도 미달하면 즉시 **[매수 금지]**를 선언하고 진입가/목표가를 삭제하십시오.
 
 [Output Format]
-📊 심층 분석 요약 (매크로/펀더멘털/기술적 진단)
-🛡️ 리스크 점검 (매수 금지 사유 또는 주의사항 최상단 배치)
+📊 '{horizon}' 심층 분석 요약
+🛡️ 리스크 점검 (매수 금지 사유 최상단 배치)
 🎯 트레이딩 전략 (Action Plan)
 - 판단: [강력 매수 / 관망 / 매수 금지] 중 택 1
-- 전략: '매수 금지'일 경우 진입가/목표가 칸을 삭제하고 **"원금 손실 위험 매우 높음, 접근 금지"**라고 명시하십시오. '눌림목 매수' 같은 유혹적인 표현을 금지합니다.
-- ⛔ 손절가 (Stop-loss): 매수 전략일 경우에만 필수 작성.
+- 전략: '{horizon}'에 맞는 진입가 및 목표가 제시 (매수 금지 시 삭제)
+- ⛔ 손절가 (Stop-loss): 매수 전략일 경우 필수 작성.
 
 👨‍👩‍👧‍👦 가족을 위한 한 줄 브리핑
 예: "상한 사과입니다. 겉이 번지르르해도 절대 한 입 베어 물지 마세요."
@@ -302,12 +308,22 @@ Phase 4. 트레이딩 셋업 (Binary Decision)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.27)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.29)")
 
 with st.sidebar:
     st.header("⚙️ 제어 패널")
     ticker = st.text_input("티커 (예: TSLA)", "TSLA").upper()
     period = st.selectbox("분석 기간", ["1y", "3y", "5y"], index=1)
+    
+    st.markdown("---")
+    st.subheader("🎯 투자 호라이즌 설정")
+    # 투자 기간 정의 명확화
+    horizon = st.radio("투자 목표 기간", [
+        "단기 (1~14일)", 
+        "중기 (2주~6개월)", 
+        "장기 (6개월 이상)"
+    ])
+    
     st.markdown("---")
     st.subheader("🛠️ 백테스트 설정 (실시간)")
     rsi_buy = st.slider("RSI 매수 기준 (과매도)", 10, 40, 30, key='rsi_buy_slider')
@@ -322,20 +338,23 @@ if st.button("🚀 전체 분석 실행", type="primary"):
         df = engine.fetch_market_data(ticker, period)
         if df is not None and not df.empty:
             df = engine.calculate_indicators(df)
-            st.session_state.analyzed_data = {'df': df, 'ticker': ticker}
+            # 호라이즌 정보도 세션에 저장
+            st.session_state.analyzed_data = {'df': df, 'ticker': ticker, 'horizon': horizon}
         else: st.error("데이터 수집 실패. 티커를 확인해 주세요.")
 
 # 2. 결과 렌더링 및 동적 백테스트
 if st.session_state.analyzed_data:
     res = st.session_state.analyzed_data
     df, t_name = res['df'], res['ticker']
+    # 저장된 호라이즌이 없으면 현재 선택값 사용 (실시간 변경 대비)
+    saved_horizon = res.get('horizon', horizon)
     
     # 동적 재계산
     m_ret, s_ret, mdd, win_rate, total_trades = engine.run_backtest(df, rsi_buy, rsi_sell)
     last = df.iloc[-1]
     
     # KPI
-    st.markdown("### 📊 Key Performance Indicators")
+    st.markdown(f"### 📊 Key Performance Indicators ({saved_horizon} 관점)")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("현재가", f"${last['Close']:.2f}", f"{(last['Close']/df.iloc[-2]['Close']-1)*100:.1f}%")
     k2.metric("전략 수익률", f"{s_ret*100:.1f}%", f"존버(Buy&Hold) {m_ret*100:.1f}%")
@@ -362,9 +381,10 @@ if st.session_state.analyzed_data:
     st.subheader("📦 Gems 데이터 팩 & 클라우드 동기화")
     c1, c2 = st.columns([3, 1])
     with c1:
-        data_pack, system_prompt = engine.generate_gems_pack(df, t_name, m_ret, s_ret, mdd, win_rate, total_trades)
+        # horizon 정보를 포함하여 데이터 팩 생성
+        data_pack, system_prompt = engine.generate_gems_pack(df, t_name, m_ret, s_ret, mdd, win_rate, total_trades, saved_horizon)
         
-        st.caption("1️⃣ 데이터 팩 (Data Pack)")
+        st.caption(f"1️⃣ 데이터 팩 (Horizon: {saved_horizon})")
         st.code(data_pack, language="yaml")
         
         st.caption("2️⃣ 수석 전략가 지시사항 (System Prompt)")
@@ -372,8 +392,8 @@ if st.session_state.analyzed_data:
         
     with c2:
         if st.button("💾 구글 시트 저장"):
-            log_data = {"Ticker": t_name, "Price": last['Close'], "RSI": last['RSI'], "Strategy_Ret": f"{s_ret*100:.2f}%", "MDD": f"{mdd*100:.2f}%", "Win_Rate": f"{win_rate:.1f}%"}
+            log_data = {"Ticker": t_name, "Price": last['Close'], "RSI": last['RSI'], "Strategy_Ret": f"{s_ret*100:.2f}%", "MDD": f"{mdd*100:.2f}%", "Win_Rate": f"{win_rate:.1f}%", "Horizon": saved_horizon}
             success, msg = engine.save_to_sheets(log_data)
             if success: st.success(msg)
             else: st.error(msg)
-        st.info("저장 시 최신 분석 결과가 시트 상단(2행)에 자동 기록됩니다.")
+        st.info("저장 시 최신 분석 결과와 '투자 기간'이 시트 상단(2행)에 자동 기록됩니다.")
