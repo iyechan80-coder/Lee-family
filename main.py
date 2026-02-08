@@ -18,7 +18,7 @@ except ImportError:
     HAS_GSPREAD = False
 
 # [초기 설정]
-st.set_page_config(page_title="Wonju AI Quant Lab v6.29", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Wonju AI Quant Lab v6.30", layout="wide", page_icon="💎")
 
 # [전역 스타일 설정]
 st.markdown("""
@@ -113,7 +113,7 @@ class QuantLabEngine:
     @st.cache_data(ttl=3600)
     def fetch_market_data(_self, ticker, period="3y"):
         df = _self._fetch_with_retry(ticker, period)
-        if df.empty: return None
+        if df is None or df.empty: return None
         df = _self._clean_index(df)
 
         macro_map = {"^VIX": "VIX", "^TNX": "US_10Y", "KRW=X": "USD_KRW"}
@@ -123,7 +123,6 @@ class QuantLabEngine:
                 m_df = _self._clean_index(m_df)
                 if 'Close' in m_df.columns:
                     series = m_df[['Close']].rename(columns={'Close': col})
-                    # 인덱스 기준 안전 병합
                     df = pd.merge(df, series, left_index=True, right_index=True, how='left')
 
         try:
@@ -157,13 +156,13 @@ class QuantLabEngine:
         return df.fillna(50)
 
     def run_backtest(self, df, rsi_buy, rsi_sell):
-        """[v6.29 수정] Pandas Future Warning 해결 및 안정성 강화"""
+        """[보완] Pandas 최신 문법 적용 (method='ffill' 제거)"""
         df = df.copy()
         df['Signal'] = 0
         df.loc[df['RSI'] < rsi_buy, 'Signal'] = 1
         df.loc[df['RSI'] > rsi_sell, 'Signal'] = -1
         
-        # [수정됨] replace(method='ffill')는 deprecated 됨 -> 표준 문법 사용
+        # [수정] deprecated 경고 방지를 위한 표준 문법
         df['Position'] = df['Signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0)
         
         df['Market_Return'] = df['Close'].pct_change().fillna(0)
@@ -178,7 +177,6 @@ class QuantLabEngine:
         drawdown = (cum_equity - running_max) / running_max
         mdd = drawdown.min()
 
-        # 승률 계산
         df['Trade'] = df['Position'].diff()
         entries = df[df['Trade'] == 1].index
         exits = df[df['Trade'] == -1].index
@@ -209,7 +207,7 @@ class QuantLabEngine:
         except Exception as e: return False, f"연동 에러: {str(e)}"
 
     def generate_gems_pack(self, df, ticker, m_ret, s_ret, mdd, win_rate, trades, horizon):
-        """[v6.29] 기간 정보와 리스크 지표가 완비된 데이터 팩 생성"""
+        """[Final Split] 데이터와 프롬프트 분리 생성"""
         last = df.iloc[-1]
         price_trend = "Upward" if df['Close'].iloc[-1] > df['Close'].iloc[-10] else "Downward"
         rsi_trend = "Upward" if df['RSI'].iloc[-1] > df['RSI'].iloc[-10] else "Downward"
@@ -249,10 +247,10 @@ Analysis Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         else:
             horizon_guide = "10년물 금리 및 환율 매크로 환경, 산업 내 독점력, 장기 밸류에이션(P/E, P/B)"
 
-        # 수석 전략가 지시사항 (Instruction Only)
+        # 3. 수석 전략가 지시사항 (Instruction Only)
         system_prompt = f"""
 [Identity & Role]
-당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 목표는 사용자가 선택한 투자 기간인 **'{horizon}'**에 최적화된 결론을 내리는 것입니다. 최우선 가치는 **'사용자의 원금 보호'**입니다.
+당신은 '원주 퀀트 연구소'의 수석 트레이딩 전략가(Chief Strategist)입니다. 당신의 최우선 가치는 **'사용자의 원금 보호'**입니다. 감정적인 희망 회로를 철저히 배제하고, 데이터가 부정적일 경우 어설픈 대안 대신 단호한 **[매수 금지]**를 선언하십시오.
 
 [Operational Protocol: 4단계 분석 프로세스]
 Phase 1. 능동적 팩트 체크 (Google Search 필수)
@@ -308,7 +306,7 @@ Phase 4. 트레이딩 셋업 (Binary Decision)
         st.plotly_chart(fig, use_container_width=True)
 
 # [UI 실행]
-st.title("💎 원주 AI 퀀트 연구소 (v6.29)")
+st.title("💎 원주 AI 퀀트 연구소 (v6.30)")
 
 with st.sidebar:
     st.header("⚙️ 제어 패널")
@@ -317,7 +315,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🎯 투자 호라이즌 설정")
-    # 투자 기간 정의 명확화
     horizon = st.radio("투자 목표 기간", [
         "단기 (1~14일)", 
         "중기 (2주~6개월)", 
